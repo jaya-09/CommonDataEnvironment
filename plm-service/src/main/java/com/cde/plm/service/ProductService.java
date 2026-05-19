@@ -6,12 +6,10 @@ import com.cde.plm.event.*;
 import com.cde.plm.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestTemplate;
 
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -29,11 +27,8 @@ public class ProductService {
     private final TraceabilityAuditLogRepository auditRepo;
     private final ProcessedEventRepository processedEventRepo;
     private final UserShadowRepository userShadowRepo;
+    private final PhaseGatePendingCheckRepository pendingCheckRepo;
     private final PlmEventPublisher eventPublisher;
-    private final RestTemplate restTemplate;
-
-    @Value("${app.services.llm-url}") private String llmServiceUrl;
-    @Value("${app.services.qlm-url:http://localhost:8082}") private String qlmServiceUrl;
 
     // ── PRODUCTS ─────────────────────────────────────────────
 
@@ -108,7 +103,20 @@ public class ProductService {
     }
 
     /**
-     * Phase Gate Saga: checks LLM (certs) + QLM (no open critical NCRs) before advancing.
+     * Phase Gate Saga — now fully async via Pub/Sub.
+     *
+     * Instead of calling QLM and LLM synchronously over REST, PLM:
+     *   1. Persists a PhaseGatePendingCheck row (status=PENDING)
+     *   2. Publishes cde.plm.phase_gate.check_requested to Pub/Sub
+     *   3. Returns immediately with canAdvance=false, status=PENDING
+     *
+     * QLM and LLM each receive the event, evaluate their check,
+     * and publish cde.plm.phase_gate.check_result back to PLM.
+     *
+     * PLM's event handler (PlmEventController) collects both results;
+     * once both arrive, it calls finalisePhaseGate() to advance or block.
+     *
+     * The caller should poll GET /versions/{id}/phase-gate-status to track progress.
      */
     @Transactional
     public PhaseGateResult advancePhase(UUID versionId, PhaseTransitionRequest req, UUID userId, String correlationId) {
@@ -116,84 +124,169 @@ public class ProductService {
         LifecyclePhase targetPhase = phaseRepo.findByPhaseName(req.getTargetPhase())
                 .orElseThrow(() -> new IllegalArgumentException("Unknown phase: " + req.getTargetPhase()));
 
-        // 1) Check LLM: all staff certified for target phase?
-        PhaseGateResult result = checkPhaseGate(version, targetPhase, correlationId);
-
-        if (!result.canAdvance) {
-            log.info("Phase gate blocked for version {} → {}: {}", versionId, req.getTargetPhase(), result.blockReason);
-            return result;
+        // Check for a duplicate in-flight check for the same version+phase
+        Optional<PhaseGatePendingCheck> existingPending = pendingCheckRepo
+                .findByVersionIdAndTargetPhaseAndStatus(versionId, req.getTargetPhase(),
+                        PhaseGatePendingCheck.CheckStatus.PENDING);
+        if (existingPending.isPresent()) {
+            log.info("Phase gate check already in progress for version {} → {}", versionId, req.getTargetPhase());
+            return PhaseGateResult.builder()
+                    .canAdvance(false)
+                    .targetPhase(req.getTargetPhase())
+                    .message("Phase gate check already in progress. Poll /versions/" + versionId + "/phase-gate-status for result.")
+                    .build();
         }
 
-        // 2) Advance phase
-        String fromPhase = version.getCurrentPhase() != null ? version.getCurrentPhase().getPhaseName() : "NONE";
-        version.setCurrentPhase(targetPhase);
-        if (targetPhase.getPhaseName().equals("Deployment") || targetPhase.getPhaseName().equals("Maintenance")) {
-            version.setStatus(ProductVersion.VersionStatus.RELEASED);
-            version.setReleasedAt(OffsetDateTime.now());
-        } else {
-            version.setStatus(ProductVersion.VersionStatus.IN_PROGRESS);
-        }
-        versionRepo.save(version);
+        // Unique correlation ID for this gate check — used to match results back
+        String gateCorrelationId = UUID.randomUUID().toString();
 
-        // 3) Publish events
-        PhaseTransitionedEvent phaseEvent = PhaseTransitionedEvent.builder()
-                .versionId(versionId).versionNumber(version.getVersionNumber())
-                .productId(version.getProduct().getProductId()).productCode(version.getProduct().getProductCode())
-                .fromPhase(fromPhase).toPhase(targetPhase.getPhaseName()).triggeredBy(userId).build();
-        eventPublisher.publishPhaseTransitioned(phaseEvent, correlationId);
+        // Persist pending check record
+        pendingCheckRepo.save(PhaseGatePendingCheck.builder()
+                .gateCorrelationId(gateCorrelationId)
+                .versionId(versionId)
+                .targetPhase(req.getTargetPhase())
+                .requestedBy(userId)
+                .correlationId(correlationId)
+                .status(PhaseGatePendingCheck.CheckStatus.PENDING)
+                .qlmResultReceived(false)
+                .llmResultReceived(false)
+                .build());
 
-        if (version.getStatus() == ProductVersion.VersionStatus.RELEASED) {
-            eventPublisher.publishVersionReleased(VersionReleasedEvent.builder()
-                    .versionId(versionId).versionNumber(version.getVersionNumber())
-                    .productId(version.getProduct().getProductId())
-                    .productCode(version.getProduct().getProductCode())
-                    .releasedAt(version.getReleasedAt()).build(), correlationId);
-        }
+        // Publish check request — QLM and LLM will both receive this
+        PhaseGateCheckRequestedEvent checkEvent = PhaseGateCheckRequestedEvent.builder()
+                .versionId(versionId)
+                .versionNumber(version.getVersionNumber())
+                .productId(version.getProduct().getProductId())
+                .productCode(version.getProduct().getProductCode())
+                .targetPhase(req.getTargetPhase())
+                .requestedBy(userId)
+                .gateCorrelationId(gateCorrelationId)
+                .build();
 
-        audit("VERSION", versionId, "PHASE_ADVANCED",
-                Map.of("from", fromPhase), Map.of("to", targetPhase.getPhaseName()), userId, "USER", correlationId);
+        eventPublisher.publishPhaseGateCheckRequested(checkEvent, correlationId);
 
-        return result;
-    }
+        audit("VERSION", versionId, "PHASE_GATE_CHECK_REQUESTED",
+                null, Map.of("targetPhase", req.getTargetPhase(), "gateCorrelationId", gateCorrelationId),
+                userId, "USER", correlationId);
 
-    private PhaseGateResult checkPhaseGate(ProductVersion version, LifecyclePhase targetPhase, String correlationId) {
-        boolean certOk = true;
-        boolean ncrOk = true;
-        int uncertifiedCount = 0;
-        List<String> openNcrs = new ArrayList<>();
-
-        // Check LLM for cert readiness
-        try {
-            var response = restTemplate.getForObject(
-                    llmServiceUrl + "/api/v1/llm/phase-readiness/" + targetPhase.getPhaseName(),
-                    Map.class);
-            certOk = Boolean.TRUE.equals(response.get("ready"));
-            uncertifiedCount = response.containsKey("uncertifiedCount")
-                    ? (Integer) response.get("uncertifiedCount") : 0;
-        } catch (Exception e) {
-            log.warn("Could not reach LLM service for phase gate check, proceeding: {}", e.getMessage());
-        }
-
-        // Check QLM for open critical NCRs on this version
-        try {
-            var response = restTemplate.getForObject(
-                    qlmServiceUrl + "/api/v1/qlm/ncr/check?versionId=" + version.getVersionId() + "&severity=CRITICAL",
-                    Map.class);
-            ncrOk = Boolean.TRUE.equals(response.get("clear"));
-        } catch (Exception e) {
-            log.warn("Could not reach QLM service for phase gate check, proceeding: {}", e.getMessage());
-        }
-
-        boolean canAdvance = certOk && ncrOk;
-        String blockReason = null;
-        if (!certOk) blockReason = uncertifiedCount + " staff missing certifications for phase " + targetPhase.getPhaseName();
-        else if (!ncrOk) blockReason = "Open critical NCRs must be resolved before advancing";
+        log.info("Phase gate check dispatched via Pub/Sub [versionId={}, targetPhase={}, gateCorrelationId={}]",
+                versionId, req.getTargetPhase(), gateCorrelationId);
 
         return PhaseGateResult.builder()
-                .canAdvance(canAdvance).targetPhase(targetPhase.getPhaseName())
-                .certCheckPassed(certOk).ncrCheckPassed(ncrOk)
-                .uncertifiedCount(uncertifiedCount).openCriticalNcrs(openNcrs)
-                .blockReason(blockReason).build();
+                .canAdvance(false)
+                .targetPhase(req.getTargetPhase())
+                .message("Phase gate check dispatched. Poll /versions/" + versionId + "/phase-gate-status for result.")
+                .build();
+    }
+
+    /**
+     * Called by PlmEventController once BOTH QLM and LLM results have arrived.
+     * Makes the final advance-or-block decision and updates the version.
+     */
+    @Transactional
+    public void finalisePhaseGate(PhaseGatePendingCheck check) {
+        boolean certOk = Boolean.TRUE.equals(check.getLlmPassed());
+        boolean ncrOk  = Boolean.TRUE.equals(check.getQlmPassed());
+        boolean canAdvance = certOk && ncrOk;
+
+        if (canAdvance) {
+            ProductVersion version = findVersion(check.getVersionId());
+            LifecyclePhase targetPhase = phaseRepo.findByPhaseName(check.getTargetPhase())
+                    .orElseThrow(() -> new IllegalStateException("Unknown phase: " + check.getTargetPhase()));
+
+            String fromPhase = version.getCurrentPhase() != null
+                    ? version.getCurrentPhase().getPhaseName() : "NONE";
+
+            version.setCurrentPhase(targetPhase);
+            if (targetPhase.getPhaseName().equals("Deployment") || targetPhase.getPhaseName().equals("Maintenance")) {
+                version.setStatus(ProductVersion.VersionStatus.RELEASED);
+                version.setReleasedAt(OffsetDateTime.now());
+            } else {
+                version.setStatus(ProductVersion.VersionStatus.IN_PROGRESS);
+            }
+            versionRepo.save(version);
+
+            // Publish downstream events
+            PhaseTransitionedEvent phaseEvent = PhaseTransitionedEvent.builder()
+                    .versionId(check.getVersionId())
+                    .versionNumber(version.getVersionNumber())
+                    .productId(version.getProduct().getProductId())
+                    .productCode(version.getProduct().getProductCode())
+                    .fromPhase(fromPhase)
+                    .toPhase(targetPhase.getPhaseName())
+                    .triggeredBy(check.getRequestedBy())
+                    .build();
+            eventPublisher.publishPhaseTransitioned(phaseEvent, check.getCorrelationId());
+
+            if (version.getStatus() == ProductVersion.VersionStatus.RELEASED) {
+                eventPublisher.publishVersionReleased(VersionReleasedEvent.builder()
+                        .versionId(check.getVersionId())
+                        .versionNumber(version.getVersionNumber())
+                        .productId(version.getProduct().getProductId())
+                        .productCode(version.getProduct().getProductCode())
+                        .releasedAt(version.getReleasedAt()).build(), check.getCorrelationId());
+            }
+
+            check.setStatus(PhaseGatePendingCheck.CheckStatus.PASSED);
+            audit("VERSION", check.getVersionId(), "PHASE_ADVANCED",
+                    Map.of("from", fromPhase),
+                    Map.of("to", targetPhase.getPhaseName(), "via", "PUBSUB_PHASE_GATE"),
+                    check.getRequestedBy(), "PUBSUB", check.getCorrelationId());
+
+            log.info("Phase gate PASSED — version {} advanced to {} [gateCorrelationId={}]",
+                    check.getVersionId(), check.getTargetPhase(), check.getGateCorrelationId());
+        } else {
+            check.setStatus(PhaseGatePendingCheck.CheckStatus.BLOCKED);
+            String reason = !certOk ? check.getLlmBlockReason() : check.getQlmBlockReason();
+            log.info("Phase gate BLOCKED for version {} → {} reason: {} [gateCorrelationId={}]",
+                    check.getVersionId(), check.getTargetPhase(), reason, check.getGateCorrelationId());
+            audit("VERSION", check.getVersionId(), "PHASE_GATE_BLOCKED",
+                    null, Map.of("reason", reason != null ? reason : "check failed"),
+                    check.getRequestedBy(), "PUBSUB", check.getCorrelationId());
+        }
+
+        check.setCompletedAt(OffsetDateTime.now());
+        pendingCheckRepo.save(check);
+    }
+
+    /**
+     * Allows callers to poll the result of an async phase gate check.
+     */
+    @Transactional(readOnly = true)
+    public PhaseGateResult getPhaseGateStatus(UUID versionId, String targetPhase) {
+        // Return the most recent check for this version+phase
+        return pendingCheckRepo
+                .findByVersionIdAndTargetPhaseAndStatus(versionId, targetPhase,
+                        PhaseGatePendingCheck.CheckStatus.PENDING)
+                .map(check -> PhaseGateResult.builder()
+                        .canAdvance(false)
+                        .targetPhase(targetPhase)
+                        .message("Phase gate check still in progress (qlm=" + check.isQlmResultReceived()
+                                + ", llm=" + check.isLlmResultReceived() + ")")
+                        .build())
+                .orElseGet(() -> {
+                    // Check for a completed result
+                    return pendingCheckRepo.findAll().stream()
+                            .filter(c -> c.getVersionId().equals(versionId)
+                                    && c.getTargetPhase().equals(targetPhase)
+                                    && c.getStatus() != PhaseGatePendingCheck.CheckStatus.PENDING)
+                            .max(Comparator.comparing(PhaseGatePendingCheck::getCreatedAt))
+                            .map(c -> PhaseGateResult.builder()
+                                    .canAdvance(c.getStatus() == PhaseGatePendingCheck.CheckStatus.PASSED)
+                                    .targetPhase(targetPhase)
+                                    .certCheckPassed(Boolean.TRUE.equals(c.getLlmPassed()))
+                                    .ncrCheckPassed(Boolean.TRUE.equals(c.getQlmPassed()))
+                                    .uncertifiedCount(c.getUncertifiedCount() != null ? c.getUncertifiedCount() : 0)
+                                    .blockReason(!Boolean.TRUE.equals(c.getLlmPassed())
+                                            ? c.getLlmBlockReason() : c.getQlmBlockReason())
+                                    .message(c.getStatus().name())
+                                    .build())
+                            .orElse(PhaseGateResult.builder()
+                                    .canAdvance(false)
+                                    .targetPhase(targetPhase)
+                                    .message("No phase gate check found for this version and phase")
+                                    .build());
+                });
     }
 
     // ── CHANGE REQUESTS ───────────────────────────────────────
@@ -294,7 +387,6 @@ public class ProductService {
     public void handleNcrRaised(NcrRaisedEvent event, String correlationId) {
         if (!idempotencyCheck(correlationId + "-NCR-" + event.getNcrId(), "cde.qlm.ncr.raised")) return;
 
-        // If critical NCR, put version on HOLD
         if ("CRITICAL".equals(event.getSeverity()) && event.getProductVersionId() != null) {
             versionRepo.findById(event.getProductVersionId()).ifPresent(v -> {
                 v.setStatus(ProductVersion.VersionStatus.HOLD);
@@ -316,6 +408,56 @@ public class ProductService {
                 .role(event.getRole()).department(event.getDepartment())
                 .lastSyncedAt(OffsetDateTime.now()).build();
         userShadowRepo.save(shadow);
+    }
+
+    /**
+     * Handles a phase gate check result arriving from QLM or LLM via Pub/Sub.
+     * Once both results are received, triggers finalisePhaseGate().
+     */
+    @Transactional
+    public void handlePhaseGateCheckResult(PhaseGateCheckResultEvent event, String correlationId) {
+        String eventKey = "PGCR-" + event.getGateCorrelationId() + "-" + event.getCheckerService();
+        if (!idempotencyCheck(eventKey, "cde.plm.phase_gate.check_result")) return;
+
+        PhaseGatePendingCheck check = pendingCheckRepo.findById(event.getGateCorrelationId())
+                .orElse(null);
+
+        if (check == null) {
+            log.warn("Received phase gate result for unknown gateCorrelationId: {}", event.getGateCorrelationId());
+            return;
+        }
+        if (check.getStatus() != PhaseGatePendingCheck.CheckStatus.PENDING) {
+            log.info("Phase gate check already finalised, ignoring late result [gateCorrelationId={}]",
+                    event.getGateCorrelationId());
+            return;
+        }
+
+        switch (event.getCheckerService()) {
+            case "QLM" -> {
+                check.setQlmResultReceived(true);
+                check.setQlmPassed(event.isPassed());
+                check.setQlmBlockReason(event.getBlockReason());
+                check.setOpenCriticalNcrCount(event.getOpenCriticalNcrCount());
+                log.info("QLM result received [gateCorrelationId={}, passed={}]",
+                        event.getGateCorrelationId(), event.isPassed());
+            }
+            case "LLM" -> {
+                check.setLlmResultReceived(true);
+                check.setLlmPassed(event.isPassed());
+                check.setLlmBlockReason(event.getBlockReason());
+                check.setUncertifiedCount(event.getUncertifiedCount());
+                log.info("LLM result received [gateCorrelationId={}, passed={}]",
+                        event.getGateCorrelationId(), event.isPassed());
+            }
+            default -> log.warn("Unknown checker service in phase gate result: {}", event.getCheckerService());
+        }
+
+        pendingCheckRepo.save(check);
+
+        // Both results in — make the final decision
+        if (check.bothResultsReceived()) {
+            finalisePhaseGate(check);
+        }
     }
 
     // ── AUDIT ─────────────────────────────────────────────────

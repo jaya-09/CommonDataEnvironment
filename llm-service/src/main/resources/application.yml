@@ -75,6 +75,7 @@ app:
   topics:
     certification-granted: cde.llm.certification.granted
     user-profile-updated: cde.llm.user.profile_updated
+    phase-gate-check-result: cde.plm.phase_gate.check_result
   cache:
     skill-list-ttl: 21600       # 6 hours
     user-profile-ttl: 3600      # 1 hour

@@ -164,7 +164,7 @@ public class UserProfileService {
         UserProfile user = userProfileRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
         var mandatoryCourses = courseRepository.findByMandatoryForPhase(phase);
-        var activeCerts = certificationRepository.findByUserAndStatus(user, com.cde.llm.entity.UserCertification.CertStatus.ACTIVE);
+        var activeCerts = certificationRepository.findByUserAndStatus(user, UserCertification.CertStatus.ACTIVE);
         var certifiedCourseIds = activeCerts.stream()
                 .map(c -> c.getCourse().getCourseId()).collect(java.util.stream.Collectors.toSet());
         var missing = mandatoryCourses.stream()
