@@ -1,0 +1,131 @@
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      # Global CORS
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "http://localhost:3000"
+            allowedHeaders: "*"
+            allowedMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+            allowCredentials: true
+
+      routes:
+
+        # ── PLM Service ──────────────────────────────────────
+        - id: plm-service
+          uri: ${PLM_SERVICE_URL:http://localhost:8081}
+          predicates:
+            - Path=/api/v1/plm/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: plm-cb
+                fallbackUri: forward:/fallback/plm
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Service-Name, plm-service
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 1000ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        # ── QLM Service ──────────────────────────────────────
+        - id: qlm-service
+          uri: ${QLM_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/api/v1/qlm/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: qlm-cb
+                fallbackUri: forward:/fallback/qlm
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Service-Name, qlm-service
+
+        # ── LLM Service ──────────────────────────────────────
+        - id: llm-service
+          uri: ${LLM_SERVICE_URL:http://localhost:8083}
+          predicates:
+            - Path=/api/v1/llm/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: llm-cb
+                fallbackUri: forward:/fallback/llm
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Service-Name, llm-service
+
+        - id: analytics-service
+          uri: ${ANALYTICS_SERVICE_URL:http://localhost:8084}
+          predicates:
+            - Path=/api/v1/analytics/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: analytics-cb
+                fallbackUri: forward:/fallback/analytics
+            - AddRequestHeader=X-Service-Name, analytics-service
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+server:
+  port: 8080
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      plm-cb:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+      qlm-cb:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+      llm-cb:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,metrics
+  endpoint:
+    gateway:
+      enabled: true
+    health:
+      show-details: always
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.cde.gateway: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId}] %logger{36} - %msg%n"

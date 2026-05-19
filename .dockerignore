@@ -1,0 +1,22 @@
+# Keep Maven build cache out
+**/target/
+
+# Frontend
+**/node_modules/
+frontend/build/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

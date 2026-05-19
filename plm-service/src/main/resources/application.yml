@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: plm-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/plm_db
+    username: plm_user
+    password: plm_pass
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  cache:
+    type: redis
+
+server:
+  port: 8081
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+app:
+  gcp:
+    project-id: cde-local
+    pubsub:
+      emulator-host: localhost:8085
+  topics:
+    version-released: cde.plm.version.released
+    phase-transitioned: cde.plm.phase.transitioned
+    change-request-approved: cde.plm.change_request.approved
+  services:
+    llm-url: ${LLM_SERVICE_URL:http://localhost:8083}
+
+logging:
+  level:
+    com.cde.plm: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId}] %logger{36} - %msg%n"
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://plm-db:5432/plm_db
+  data:
+    redis:
+      host: redis
+app:
+  gcp:
+    pubsub:
+      emulator-host: pubsub-emulator:8085
