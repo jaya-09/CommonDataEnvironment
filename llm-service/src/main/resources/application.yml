@@ -74,8 +74,9 @@ app:
       emulator-host: localhost:8085   # empty in prod (uses ADC)
   topics:
     certification-granted: cde.llm.certification.granted
-    user-profile-updated: cde.llm.user.profile_updated
-    phase-gate-check-result: cde.plm.phase_gate.check_result
+    user-profile-updated: cde.llm.user.profile.updated
+    phase-gate-check-result: cde.plm.phase.gate.check.result
+    enrollment-triggered: cde.llm.enrollment.triggered
   cache:
     skill-list-ttl: 21600       # 6 hours
     user-profile-ttl: 3600      # 1 hour

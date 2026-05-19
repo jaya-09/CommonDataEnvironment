@@ -1,5 +1,8 @@
 package com.cde.plm.service;
 
+import com.cde.plm.audit.AuditAction;
+import com.cde.plm.audit.AuditEntityType;
+import com.cde.plm.audit.AuditEventSource;
 import com.cde.plm.dto.*;
 import com.cde.plm.entity.*;
 import com.cde.plm.event.*;
@@ -45,7 +48,7 @@ public class ProductService {
                 .createdBy(userId)
                 .build());
 
-        audit("PRODUCT", product.getProductId(), "CREATED", null, product, userId, "USER", null);
+        audit(AuditEntityType.PRODUCT, product.getProductId(), AuditAction.CREATED, null, product, userId, AuditEventSource.USER, null);
         return toProductResponse(product, false);
     }
 
@@ -87,7 +90,7 @@ public class ProductService {
                 .createdBy(userId)
                 .build());
 
-        audit("VERSION", version.getVersionId(), "CREATED", null, version, userId, "USER", null);
+        audit(AuditEntityType.VERSION, version.getVersionId(), AuditAction.CREATED, null, version, userId, AuditEventSource.USER, null);
         return toVersionResponse(version);
     }
 
@@ -165,9 +168,9 @@ public class ProductService {
 
         eventPublisher.publishPhaseGateCheckRequested(checkEvent, correlationId);
 
-        audit("VERSION", versionId, "PHASE_GATE_CHECK_REQUESTED",
+        audit(AuditEntityType.VERSION, versionId, AuditAction.PHASE_GATE_CHECK_REQUESTED,
                 null, Map.of("targetPhase", req.getTargetPhase(), "gateCorrelationId", gateCorrelationId),
-                userId, "USER", correlationId);
+                userId, AuditEventSource.USER, correlationId);
 
         log.info("Phase gate check dispatched via Pub/Sub [versionId={}, targetPhase={}, gateCorrelationId={}]",
                 versionId, req.getTargetPhase(), gateCorrelationId);
@@ -228,10 +231,10 @@ public class ProductService {
             }
 
             check.setStatus(PhaseGatePendingCheck.CheckStatus.PASSED);
-            audit("VERSION", check.getVersionId(), "PHASE_ADVANCED",
+            audit(AuditEntityType.VERSION, check.getVersionId(), AuditAction.PHASE_ADVANCED,
                     Map.of("from", fromPhase),
                     Map.of("to", targetPhase.getPhaseName(), "via", "PUBSUB_PHASE_GATE"),
-                    check.getRequestedBy(), "PUBSUB", check.getCorrelationId());
+                    check.getRequestedBy(), AuditEventSource.PUBSUB, check.getCorrelationId());
 
             log.info("Phase gate PASSED — version {} advanced to {} [gateCorrelationId={}]",
                     check.getVersionId(), check.getTargetPhase(), check.getGateCorrelationId());
@@ -240,9 +243,9 @@ public class ProductService {
             String reason = !certOk ? check.getLlmBlockReason() : check.getQlmBlockReason();
             log.info("Phase gate BLOCKED for version {} → {} reason: {} [gateCorrelationId={}]",
                     check.getVersionId(), check.getTargetPhase(), reason, check.getGateCorrelationId());
-            audit("VERSION", check.getVersionId(), "PHASE_GATE_BLOCKED",
+            audit(AuditEntityType.VERSION, check.getVersionId(), AuditAction.PHASE_GATE_BLOCKED,
                     null, Map.of("reason", reason != null ? reason : "check failed"),
-                    check.getRequestedBy(), "PUBSUB", check.getCorrelationId());
+                    check.getRequestedBy(), AuditEventSource.PUBSUB, check.getCorrelationId());
         }
 
         check.setCompletedAt(OffsetDateTime.now());
@@ -265,11 +268,11 @@ public class ProductService {
                                 + ", llm=" + check.isLlmResultReceived() + ")")
                         .build())
                 .orElseGet(() -> {
-                    // Check for a completed result
-                    return pendingCheckRepo.findAll().stream()
-                            .filter(c -> c.getVersionId().equals(versionId)
-                                    && c.getTargetPhase().equals(targetPhase)
-                                    && c.getStatus() != PhaseGatePendingCheck.CheckStatus.PENDING)
+                    // Check for the most recent completed result
+                    return pendingCheckRepo
+                            .findByVersionIdAndTargetPhaseAndStatusNot(versionId, targetPhase,
+                                    PhaseGatePendingCheck.CheckStatus.PENDING)
+                            .stream()
                             .max(Comparator.comparing(PhaseGatePendingCheck::getCreatedAt))
                             .map(c -> PhaseGateResult.builder()
                                     .canAdvance(c.getStatus() == PhaseGatePendingCheck.CheckStatus.PASSED)
@@ -303,7 +306,7 @@ public class ProductService {
                 .reason(req.reason).impactAnalysis(req.impactAnalysis)
                 .status(ChangeRequest.CrStatus.DRAFT).raisedBy(userId).build());
 
-        audit("CHANGE_REQUEST", cr.getCrId(), "CREATED", null, cr, userId, "USER", null);
+        audit(AuditEntityType.CHANGE_REQUEST, cr.getCrId(), AuditAction.CREATED, null, cr, userId, AuditEventSource.USER, null);
         return toCrResponse(cr);
     }
 
@@ -313,7 +316,7 @@ public class ProductService {
                 .orElseThrow(() -> new NoSuchElementException("CR not found: " + crId));
         cr.setStatus(ChangeRequest.CrStatus.SUBMITTED);
         crRepo.save(cr);
-        audit("CHANGE_REQUEST", crId, "SUBMITTED", null, null, userId, "USER", correlationId);
+        audit(AuditEntityType.CHANGE_REQUEST, crId, AuditAction.SUBMITTED, null, null, userId, AuditEventSource.USER, correlationId);
         return toCrResponse(cr);
     }
 
@@ -333,7 +336,8 @@ public class ProductService {
                     .versionId(cr.getVersion().getVersionId()).build(), correlationId);
         }
 
-        audit("CHANGE_REQUEST", crId, decision, null, null, approverId, "USER", correlationId);
+        AuditAction auditAction = newStatus == ChangeRequest.CrStatus.APPROVED ? AuditAction.APPROVED : AuditAction.REJECTED;
+        audit(AuditEntityType.CHANGE_REQUEST, crId, auditAction, null, null, approverId, AuditEventSource.USER, correlationId);
         return toCrResponse(cr);
     }
 
@@ -389,18 +393,26 @@ public class ProductService {
 
         if ("CRITICAL".equals(event.getSeverity()) && event.getProductVersionId() != null) {
             versionRepo.findById(event.getProductVersionId()).ifPresent(v -> {
+                String oldStatus = v.getStatus().name();
                 v.setStatus(ProductVersion.VersionStatus.HOLD);
                 versionRepo.save(v);
                 log.info("Version {} put on HOLD due to critical NCR {}", v.getVersionId(), event.getNcrId());
-                audit("VERSION", v.getVersionId(), "PUT_ON_HOLD",
-                        null, Map.of("reason", "Critical NCR " + event.getNcrNumber()), null, "PUBSUB", correlationId);
+                eventPublisher.publishVersionStatusChanged(VersionStatusChangedEvent.builder()
+                        .versionId(v.getVersionId())
+                        .productCode(v.getProduct().getProductCode())
+                        .versionNumber(v.getVersionNumber())
+                        .oldStatus(oldStatus)
+                        .newStatus(ProductVersion.VersionStatus.HOLD.name())
+                        .build(), correlationId);
+                audit(AuditEntityType.VERSION, v.getVersionId(), AuditAction.PUT_ON_HOLD,
+                        null, Map.of("reason", "Critical NCR " + event.getNcrNumber()), null, AuditEventSource.PUBSUB, correlationId);
             });
         }
     }
 
     @Transactional
     public void handleUserProfileUpdated(UserProfileUpdatedEvent event, String correlationId) {
-        if (!idempotencyCheck(correlationId + "-USR-" + event.getUserId(), "cde.llm.user.profile_updated")) return;
+        if (!idempotencyCheck(correlationId + "-USR-" + event.getUserId(), "cde.llm.user.profile.updated")) return;
 
         UserShadow shadow = UserShadow.builder()
                 .userId(event.getUserId()).employeeId(event.getEmployeeId())
@@ -417,7 +429,7 @@ public class ProductService {
     @Transactional
     public void handlePhaseGateCheckResult(PhaseGateCheckResultEvent event, String correlationId) {
         String eventKey = "PGCR-" + event.getGateCorrelationId() + "-" + event.getCheckerService();
-        if (!idempotencyCheck(eventKey, "cde.plm.phase_gate.check_result")) return;
+        if (!idempotencyCheck(eventKey, "cde.plm.phase.gate.check.result")) return;
 
         PhaseGatePendingCheck check = pendingCheckRepo.findById(event.getGateCorrelationId())
                 .orElse(null);
@@ -463,8 +475,8 @@ public class ProductService {
     // ── AUDIT ─────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<AuditLogEntry> getAuditLog(String entityType, UUID entityId) {
-        return auditRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDesc(entityType, entityId).stream()
+    public List<AuditLogEntry> getAuditLog(AuditEntityType entityType, UUID entityId) {
+        return auditRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDesc(entityType.name(), entityId).stream()
                 .map(l -> AuditLogEntry.builder()
                         .logId(l.getLogId()).entityType(l.getEntityType()).entityId(l.getEntityId())
                         .action(l.getAction()).performedBy(l.getPerformedBy())
@@ -488,12 +500,12 @@ public class ProductService {
         return true;
     }
 
-    private void audit(String entityType, UUID entityId, String action,
-                       Object oldVal, Object newVal, UUID by, String source, String correlationId) {
+    private void audit(AuditEntityType entityType, UUID entityId, AuditAction action,
+                       Object oldVal, Object newVal, UUID by, AuditEventSource source, String correlationId) {
         try {
             auditRepo.save(TraceabilityAuditLog.builder()
-                    .entityType(entityType).entityId(entityId).action(action)
-                    .performedBy(by).eventSource(source).correlationId(correlationId).build());
+                    .entityType(entityType.name()).entityId(entityId).action(action.name())
+                    .performedBy(by).eventSource(source.name()).correlationId(correlationId).build());
         } catch (Exception e) {
             log.warn("Audit log failed: {}", e.getMessage());
         }

@@ -33,6 +33,9 @@ public class EventPublisher {
     @Value("${app.topics.phase-gate-check-result}")
     private String phaseGateResultTopic;
 
+    @Value("${app.topics.enrollment-triggered}")
+    private String enrollmentTriggeredTopic;
+
     private final Map<String, Publisher> publisherCache = new ConcurrentHashMap<>();
 
     public void publishCertificationGranted(CertificationGrantedEvent event, String correlationId) {
@@ -40,7 +43,7 @@ public class EventPublisher {
     }
 
     public void publishUserProfileUpdated(UserProfileUpdatedEvent event, String correlationId) {
-        publish(userProfileUpdatedTopic, EventEnvelope.of("cde.llm.user.profile_updated", event, correlationId));
+        publish(userProfileUpdatedTopic, EventEnvelope.of("cde.llm.user.profile.updated", event, correlationId));
     }
 
     /**
@@ -48,7 +51,11 @@ public class EventPublisher {
      * after evaluating a phase gate check request.
      */
     public void publishPhaseGateCheckResult(PhaseGateCheckResultEvent event, String correlationId) {
-        publish(phaseGateResultTopic, EventEnvelope.of("cde.plm.phase_gate.check_result", event, correlationId));
+        publish(phaseGateResultTopic, EventEnvelope.of("cde.plm.phase.gate.check.result", event, correlationId));
+    }
+
+    public void publishEnrollmentTriggered(EnrollmentTriggeredEvent event, String correlationId) {
+        publish(enrollmentTriggeredTopic, EventEnvelope.of("cde.llm.enrollment.triggered", event, correlationId));
     }
 
     private void publish(String topicName, EventEnvelope envelope) {

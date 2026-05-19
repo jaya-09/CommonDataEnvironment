@@ -46,10 +46,10 @@ public class EventHandlerService {
 
         // ── ROUTE ──
         switch (envelope.getType()) {
-            case "cde.plm.phase.transitioned"     -> handlePhaseTransitioned(envelope);
-            case "cde.qlm.ncr.raised"             -> handleNcrRaised(envelope);
-            case "cde.qlm.audit.finding"          -> handleAuditFinding(envelope);
-            case "cde.plm.phase_gate.check_requested" -> handlePhaseGateCheckRequested(envelope);
+            case "cde.plm.phase.transitioned"          -> handlePhaseTransitioned(envelope);
+            case "cde.qlm.ncr.raised"                  -> handleNcrRaised(envelope);
+            case "cde.qlm.audit.finding"               -> handleAuditFinding(envelope);
+            case "cde.plm.phase.gate.check.requested"  -> handlePhaseGateCheckRequested(envelope);
             default -> log.warn("No handler for event type: {}", envelope.getType());
         }
 
@@ -152,7 +152,7 @@ public class EventHandlerService {
 
     /**
      * PLM phase gate check request → evaluate certification readiness for target phase.
-     * Publishes result back on cde.plm.phase_gate.check_result.
+     * Publishes result back on cde.plm.phase.gate.check.result.
      */
     private void handlePhaseGateCheckRequested(EventEnvelope envelope) {
         PhaseGateCheckRequestedEvent event =

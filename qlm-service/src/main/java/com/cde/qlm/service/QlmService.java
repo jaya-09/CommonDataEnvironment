@@ -1,5 +1,7 @@
 package com.cde.qlm.service;
 
+import com.cde.qlm.audit.AuditAction;
+import com.cde.qlm.audit.AuditEntityType;
 import com.cde.qlm.dto.*;
 import com.cde.qlm.entity.*;
 import com.cde.qlm.event.*;
@@ -41,7 +43,7 @@ public class QlmService {
                 .status(NonConformance.NcrStatus.OPEN)
                 .reportedBy(userId).build());
 
-        audit("NCR", ncr.getNcrId(), "CREATED", userId, "USER", correlationId);
+        audit(AuditEntityType.NCR, ncr.getNcrId(), AuditAction.CREATED, userId, correlationId);
 
         publisher.publishNcrRaised(NcrRaisedEvent.builder()
                 .ncrId(ncr.getNcrId()).ncrNumber(ncrNumber)
@@ -76,7 +78,13 @@ public class QlmService {
         }
         if (req.getAssignedTo() != null) ncr.setAssignedTo(req.getAssignedTo());
         ncrRepo.save(ncr);
-        audit("NCR", ncrId, "UPDATED", userId, "USER", correlationId);
+        audit(AuditEntityType.NCR, ncrId, AuditAction.UPDATED, userId, correlationId);
+        if (ncr.getStatus() == NonConformance.NcrStatus.CLOSED) {
+            publisher.publishNcrClosed(NcrClosedEvent.builder()
+                    .ncrId(ncr.getNcrId()).ncrNumber(ncr.getNcrNumber())
+                    .productVersionId(ncr.getProductVersionId()).productCode(ncr.getProductCode())
+                    .build(), correlationId);
+        }
         return toNcrResponse(ncr);
     }
 
@@ -109,7 +117,12 @@ public class QlmService {
             ncr.setStatus(NonConformance.NcrStatus.PENDING_CAPA);
             ncrRepo.save(ncr);
         }
-        audit("CAPA", capa.getCapaId(), "CREATED", userId, "USER", correlationId);
+        publisher.publishCapaRaised(CapaRaisedEvent.builder()
+                .capaId(capa.getCapaId()).capaNumber(capa.getCapaNumber())
+                .ncrId(ncr != null ? ncr.getNcrId() : null)
+                .productVersionId(ncr != null ? ncr.getProductVersionId() : null)
+                .build(), correlationId);
+        audit(AuditEntityType.CAPA, capa.getCapaId(), AuditAction.CREATED, userId, correlationId);
         return toCapaResponse(capa);
     }
 
@@ -129,7 +142,7 @@ public class QlmService {
                 .ncrId(capa.getNcr() != null ? capa.getNcr().getNcrId() : null)
                 .productVersionId(versionId).build(), correlationId);
 
-        audit("CAPA", capaId, "CLOSED", userId, "USER", correlationId);
+        audit(AuditEntityType.CAPA, capaId, AuditAction.CLOSED, userId, correlationId);
         return toCapaResponse(capa);
     }
 
@@ -151,7 +164,7 @@ public class QlmService {
                 .scope(req.getScope()).scheduledDate(req.getScheduledDate())
                 .status(QualityAudit.AuditStatus.PLANNED)
                 .leadAuditorId(req.getLeadAuditorId()).build());
-        audit("AUDIT", audit.getAuditId(), "CREATED", userId, "USER", correlationId);
+        audit(AuditEntityType.AUDIT, audit.getAuditId(), AuditAction.CREATED, userId, correlationId);
         return toAuditResponse(audit);
     }
 
@@ -171,7 +184,7 @@ public class QlmService {
                     .description(summary).courseCodeRequired(courseCode)
                     .affectedDepartment(affectedDept).build(), correlationId);
         }
-        audit("AUDIT", auditId, "COMPLETED", userId, "USER", correlationId);
+        audit(AuditEntityType.AUDIT, auditId, AuditAction.COMPLETED, userId, correlationId);
         return toAuditResponse(qa);
     }
 
@@ -195,7 +208,15 @@ public class QlmService {
                 .impact(req.getImpact()).mitigationPlan(req.getMitigationPlan())
                 .ownerUserId(req.getOwnerUserId())
                 .status(RiskRegister.RiskStatus.IDENTIFIED).build());
-        audit("RISK", risk.getRiskId(), "CREATED", userId, "USER", correlationId);
+        risk.calcScore();
+        riskRepo.save(risk);
+        publisher.publishRiskRegistered(RiskRegisteredEvent.builder()
+                .riskId(risk.getRiskId()).productVersionId(risk.getProductVersionId())
+                .title(risk.getTitle()).category(risk.getCategory())
+                .likelihood(risk.getLikelihood()).impact(risk.getImpact())
+                .riskScore(risk.getRiskScore())
+                .build(), correlationId);
+        audit(AuditEntityType.RISK, risk.getRiskId(), AuditAction.CREATED, userId, correlationId);
         return toRiskResponse(risk);
     }
 
@@ -214,7 +235,7 @@ public class QlmService {
                 .title(req.getTitle()).tdpRefId(req.getTdpRefId())
                 .storageUrl(req.getStorageUrl()).documentHash(req.getDocumentHash())
                 .approvalStatus(DocumentControl.DocStatus.DRAFT).build());
-        audit("DOCUMENT", doc.getDocId(), "CREATED", userId, "USER", correlationId);
+        audit(AuditEntityType.DOCUMENT, doc.getDocId(), AuditAction.CREATED, userId, correlationId);
         return toDocResponse(doc);
     }
 
@@ -227,7 +248,7 @@ public class QlmService {
         doc.setApprovedAt(OffsetDateTime.now());
         doc.setEffectiveDate(java.time.LocalDate.now());
         docRepo.save(doc);
-        audit("DOCUMENT", docId, "APPROVED", approverId, "USER", correlationId);
+        audit(AuditEntityType.DOCUMENT, docId, AuditAction.APPROVED, approverId, correlationId);
         return toDocResponse(doc);
     }
 
@@ -242,8 +263,29 @@ public class QlmService {
     // ── EVENT HANDLING ────────────────────────────────────────
 
     @Transactional
+    public void handlePhaseGateCheckRequested(PhaseGateCheckRequestedEvent event, String correlationId) {
+        if (!idempotencyCheck("PGCR-QLM-" + event.getGateCorrelationId(), "cde.plm.phase.gate.check.requested")) return;
+
+        NcrCheckResponse check = checkNcrsForVersion(event.getVersionId(), "CRITICAL");
+        boolean passed = check.isClear();
+
+        publisher.publishPhaseGateCheckResult(PhaseGateCheckResultEvent.builder()
+                .gateCorrelationId(event.getGateCorrelationId())
+                .versionId(event.getVersionId())
+                .targetPhase(event.getTargetPhase())
+                .checkerService("QLM")
+                .passed(passed)
+                .blockReason(passed ? null : check.getOpenCriticalCount() + " open critical NCR(s) blocking phase transition")
+                .openCriticalNcrCount(check.getOpenCriticalCount())
+                .build(), correlationId);
+
+        log.info("Phase gate NCR check completed [versionId={}, targetPhase={}, passed={}, openCritical={}]",
+                event.getVersionId(), event.getTargetPhase(), passed, check.getOpenCriticalCount());
+    }
+
+    @Transactional
     public void handleUserProfileUpdated(UserProfileUpdatedEvent event, String correlationId) {
-        if (!idempotencyCheck(correlationId + "-USR-" + event.getUserId(), "cde.llm.user.profile_updated")) return;
+        if (!idempotencyCheck(correlationId + "-USR-" + event.getUserId(), "cde.llm.user.profile.updated")) return;
         userShadowRepo.save(UserShadow.builder()
                 .userId(event.getUserId()).employeeId(event.getEmployeeId())
                 .fullName(event.getFullName()).role(event.getRole())
@@ -253,18 +295,18 @@ public class QlmService {
     // ── AUDIT HELPERS ─────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<AuditLogEntry> getAuditLog(String entityType, UUID entityId) {
-        return logRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDesc(entityType, entityId).stream()
+    public List<AuditLogEntry> getAuditLog(AuditEntityType entityType, UUID entityId) {
+        return logRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDesc(entityType.name(), entityId).stream()
                 .map(l -> AuditLogEntry.builder().logId(l.getLogId())
                         .entityType(l.getEntityType()).entityId(l.getEntityId())
                         .action(l.getAction()).performedBy(l.getPerformedBy())
                         .eventSource(l.getEventSource()).createdAt(l.getCreatedAt()).build()).toList();
     }
 
-    private void audit(String type, UUID id, String action, UUID by, String source, String correlationId) {
+    private void audit(AuditEntityType type, UUID id, AuditAction action, UUID by, String correlationId) {
         try {
-            logRepo.save(QualityAuditLog.builder().entityType(type).entityId(id)
-                    .action(action).performedBy(by).eventSource(source)
+            logRepo.save(QualityAuditLog.builder().entityType(type.name()).entityId(id)
+                    .action(action.name()).performedBy(by).eventSource("USER")
                     .correlationId(correlationId).build());
         } catch (Exception e) { log.warn("Audit log failed: {}", e.getMessage()); }
     }

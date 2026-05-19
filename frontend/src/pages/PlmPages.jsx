@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Plus, GitBranch, ChevronRight, ArrowRight, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, GitBranch, ChevronRight, ArrowRight, CheckCircle, XCircle, Loader } from 'lucide-react';
 import { plmApi } from '../api';
 import { Card, CardHeader, Table, Badge, Button, Modal, Input, Textarea, Select, StatCard, useToast, LoadingState, Alert } from '../components/common';
 
@@ -80,6 +80,8 @@ export function ProductsPage() {
   );
 }
 
+const TERMINAL_STATUSES = new Set(['PASSED', 'BLOCKED', 'TIMEOUT']);
+
 function VersionsPanel({ productId, toast }) {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
@@ -87,9 +89,35 @@ function VersionsPanel({ productId, toast }) {
   const [versionNumber, setVersionNumber] = useState('');
   const [phaseTarget, setPhaseTarget] = useState('');
   const [phaseResult, setPhaseResult] = useState(null);
+  const [pendingGate, setPendingGate] = useState(null); // { versionId, targetPhase }
 
   const { data: versions = [] } = useQuery(['versions', productId], () => plmApi.getVersions(productId));
   const { data: phases = [] } = useQuery('phases', plmApi.getPhases);
+
+  const { data: gateStatus } = useQuery(
+    ['gateStatus', pendingGate?.versionId, pendingGate?.targetPhase],
+    () => plmApi.getPhaseGateStatus(pendingGate.versionId, pendingGate.targetPhase),
+    {
+      enabled: !!pendingGate,
+      refetchInterval: data => TERMINAL_STATUSES.has(data?.message) ? false : 2000,
+    }
+  );
+
+  useEffect(() => {
+    if (!gateStatus || !pendingGate) return;
+    if (TERMINAL_STATUSES.has(gateStatus.message)) {
+      setPhaseResult(gateStatus);
+      setPendingGate(null);
+      if (gateStatus.canAdvance) qc.invalidateQueries(['versions', productId]);
+    }
+  }, [gateStatus, pendingGate]);
+
+  const closePhaseModal = () => {
+    setShowPhase(null);
+    setPhaseResult(null);
+    setPendingGate(null);
+    setPhaseTarget('');
+  };
 
   const createMutation = useMutation(data => plmApi.createVersion(productId, data), {
     onSuccess: () => { qc.invalidateQueries(['versions', productId]); setShowCreate(false); setVersionNumber(''); toast('Version created', 'success'); },
@@ -97,9 +125,20 @@ function VersionsPanel({ productId, toast }) {
   });
 
   const phaseMutation = useMutation(({ versionId, target }) => plmApi.advancePhase(versionId, { targetPhase: target }), {
-    onSuccess: (data) => { qc.invalidateQueries(['versions', productId]); setPhaseResult(data); },
+    onSuccess: (data, variables) => {
+      if (data.canAdvance) {
+        setPhaseResult(data);
+        qc.invalidateQueries(['versions', productId]);
+      } else if (data.blockReason) {
+        setPhaseResult(data);
+      } else {
+        setPendingGate({ versionId: variables.versionId, targetPhase: variables.target });
+      }
+    },
     onError: e => toast(e.message, 'error'),
   });
+
+  const isPolling = !!pendingGate;
 
   return (
     <div>
@@ -116,7 +155,7 @@ function VersionsPanel({ productId, toast }) {
             </div>
             <div className="flex items-center gap-2">
               <Badge status={v.status} />
-              <Button size="sm" variant="ghost" onClick={() => { setShowPhase(v); setPhaseResult(null); }}>
+              <Button size="sm" variant="ghost" onClick={() => { setShowPhase(v); setPhaseResult(null); setPendingGate(null); setPhaseTarget(''); }}>
                 <ArrowRight size={14} />Advance
               </Button>
             </div>
@@ -136,27 +175,39 @@ function VersionsPanel({ productId, toast }) {
         </div>
       </Modal>
 
-      <Modal isOpen={!!showPhase} onClose={() => { setShowPhase(null); setPhaseResult(null); }} title="Advance Lifecycle Phase">
+      <Modal isOpen={!!showPhase} onClose={closePhaseModal} title="Advance Lifecycle Phase">
         {showPhase && (
           <div className="space-y-4">
             <p className="text-sm text-gray-600">Current phase: <strong>{showPhase.currentPhase || 'None'}</strong></p>
-            <Select label="Target Phase" value={phaseTarget} onChange={e => setPhaseTarget(e.target.value)}>
+            <Select label="Target Phase" value={phaseTarget} onChange={e => setPhaseTarget(e.target.value)}
+              disabled={isPolling || !!phaseResult}>
               <option value="">Select phase…</option>
               {phases.map(p => <option key={p.phaseId} value={p.phaseName}>{p.displayName}</option>)}
             </Select>
-            {phaseResult && (
-              <div>
-                {phaseResult.canAdvance
-                  ? <Alert type="success" message={`Phase advanced to ${phaseResult.targetPhase} successfully!`} />
-                  : <Alert type="error" message={`Blocked: ${phaseResult.blockReason}`} />}
+
+            {isPolling && (
+              <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-700">
+                <Loader size={14} className="animate-spin flex-shrink-0" />
+                <span>Running gate checks (NCR + certifications)…</span>
               </div>
             )}
+
+            {phaseResult && !isPolling && (
+              <div>
+                {phaseResult.canAdvance
+                  ? <Alert type="success" message={`Phase advanced to ${phaseResult.toPhase || phaseResult.targetPhase} successfully!`} />
+                  : phaseResult.message === 'TIMEOUT'
+                    ? <Alert type="error" message="Gate check timed out — one or more services did not respond. Please try again." />
+                    : <Alert type="error" message={`Blocked: ${phaseResult.blockReason || 'Gate check failed'}`} />}
+              </div>
+            )}
+
             <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => { setShowPhase(null); setPhaseResult(null); }}>Close</Button>
-              {!phaseResult && (
+              <Button variant="secondary" onClick={closePhaseModal}>Close</Button>
+              {!isPolling && !phaseResult && (
                 <Button onClick={() => phaseMutation.mutate({ versionId: showPhase.versionId, target: phaseTarget })}
                   disabled={!phaseTarget || phaseMutation.isLoading}>
-                  {phaseMutation.isLoading ? 'Checking gates…' : 'Advance Phase'}
+                  {phaseMutation.isLoading ? 'Dispatching…' : 'Advance Phase'}
                 </Button>
               )}
             </div>

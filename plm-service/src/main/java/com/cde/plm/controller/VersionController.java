@@ -1,5 +1,6 @@
 package com.cde.plm.controller;
 
+import com.cde.plm.audit.AuditEntityType;
 import com.cde.plm.dto.*;
 import com.cde.plm.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -66,6 +67,6 @@ public class VersionController {
 
     @GetMapping("/{versionId}/audit") @Operation(summary = "Get audit trail")
     public ResponseEntity<List<AuditLogEntry>> getAudit(@PathVariable UUID versionId) {
-        return ResponseEntity.ok(productService.getAuditLog("VERSION", versionId));
+        return ResponseEntity.ok(productService.getAuditLog(AuditEntityType.VERSION, versionId));
     }
 }

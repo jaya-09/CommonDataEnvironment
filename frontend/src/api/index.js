@@ -25,6 +25,7 @@ export const plmApi = {
   createVersion: (productId, data) => api.post(`/plm/products/${productId}/versions`, data).then(r => r.data),
   getVersion: id => api.get(`/plm/versions/${id}`).then(r => r.data),
   advancePhase: (versionId, data) => api.post(`/plm/versions/${versionId}/phase`, data).then(r => r.data),
+  getPhaseGateStatus: (versionId, targetPhase) => api.get(`/plm/versions/${versionId}/phase-gate-status`, { params: { targetPhase } }).then(r => r.data),
   getChangeRequests: versionId => api.get(`/plm/versions/${versionId}/change-requests`).then(r => r.data),
   createChangeRequest: (versionId, data) => api.post(`/plm/versions/${versionId}/change-requests`, data).then(r => r.data),
   submitCR: crId => api.post(`/plm/change-requests/${crId}/submit`).then(r => r.data),

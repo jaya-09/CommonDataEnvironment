@@ -24,6 +24,7 @@ public class PlmEventPublisher {
     @Value("${app.topics.phase-transitioned}") private String phaseTransitionedTopic;
     @Value("${app.topics.change-request-approved}") private String crApprovedTopic;
     @Value("${app.topics.phase-gate-check-requested}") private String phaseGateCheckRequestedTopic;
+    @Value("${app.topics.version-status-changed}") private String versionStatusChangedTopic;
 
     private final Map<String, Publisher> cache = new ConcurrentHashMap<>();
 
@@ -36,7 +37,7 @@ public class PlmEventPublisher {
     }
 
     public void publishChangeRequestApproved(ChangeRequestApprovedEvent e, String correlationId) {
-        publish(crApprovedTopic, EventEnvelope.of("cde.plm.change_request.approved", e, correlationId));
+        publish(crApprovedTopic, EventEnvelope.of("cde.plm.change.request.approved", e, correlationId));
     }
 
     /**
@@ -45,7 +46,12 @@ public class PlmEventPublisher {
      */
     public void publishPhaseGateCheckRequested(PhaseGateCheckRequestedEvent e, String correlationId) {
         publish(phaseGateCheckRequestedTopic,
-                EventEnvelope.of("cde.plm.phase_gate.check_requested", e, correlationId));
+                EventEnvelope.of("cde.plm.phase.gate.check.requested", e, correlationId));
+    }
+
+    public void publishVersionStatusChanged(VersionStatusChangedEvent e, String correlationId) {
+        publish(versionStatusChangedTopic,
+                EventEnvelope.of("cde.plm.version.status.changed", e, correlationId));
     }
 
     private void publish(String topicName, EventEnvelope envelope) {

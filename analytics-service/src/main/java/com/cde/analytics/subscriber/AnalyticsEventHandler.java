@@ -57,7 +57,7 @@ public class AnalyticsEventHandler {
                 // PLM
                 case "cde.plm.version.released"         -> handleVersionReleased(envelope);
                 case "cde.plm.phase.transitioned"        -> handlePhaseTransitioned(envelope);
-                case "cde.plm.version.status_changed"    -> handleVersionStatusChanged(envelope);
+                case "cde.plm.version.status.changed"    -> handleVersionStatusChanged(envelope);
 
                 // QLM
                 case "cde.qlm.ncr.raised"               -> handleNcrRaised(envelope);
