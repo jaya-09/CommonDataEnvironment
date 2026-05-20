@@ -14,6 +14,7 @@ const NAV = [
       { label: 'Versions', to: '/plm/versions' },
       { label: 'Change Requests', to: '/plm/change-requests' },
       { label: 'Lifecycle Phases', to: '/plm/phases' },
+      { label: 'Bill of Materials', to: '/plm/bom' },
     ]
   },
   {

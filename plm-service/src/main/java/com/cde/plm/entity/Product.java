@@ -29,6 +29,9 @@ public class Product {
     @Column(name = "created_by", nullable = false)
     private UUID createdBy;
 
+    @Column(name = "approver_user_id")
+    private UUID approverUserId;
+
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 

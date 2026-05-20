@@ -14,6 +14,8 @@ public class ProductResponse {
     private String name;
     private String description;
     private String status;
+    private UUID approverUserId;
+    private String approverName;
     public List<ProductVersionSummary> versions;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

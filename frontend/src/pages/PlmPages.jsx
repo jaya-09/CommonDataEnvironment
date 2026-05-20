@@ -10,22 +10,24 @@ export function ProductsPage() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [selected, setSelected] = useState(null);
-  const [form, setForm] = useState({ productCode: '', name: '', description: '' });
+  const [form, setForm] = useState({ productCode: '', name: '', description: '', approverUserId: '' });
 
   const { data: products = [], isLoading } = useQuery('products', plmApi.getProducts);
+  const { data: plmUsers = [] } = useQuery('plmUsers', plmApi.getPlmUsers);
   const { data: selectedVersions = [] } = useQuery(
     ['versions', selected?.productId], () => plmApi.getVersions(selected.productId),
     { enabled: !!selected }
   );
 
   const createMutation = useMutation(plmApi.createProduct, {
-    onSuccess: () => { qc.invalidateQueries('products'); setShowCreate(false); setForm({ productCode: '', name: '', description: '' }); toast('Product created', 'success'); },
+    onSuccess: () => { qc.invalidateQueries('products'); setShowCreate(false); setForm({ productCode: '', name: '', description: '', approverUserId: '' }); toast('Product created', 'success'); },
     onError: e => toast(e.message, 'error'),
   });
 
   const columns = [
     { key: 'productCode', label: 'Code' },
     { key: 'name', label: 'Name' },
+    { key: 'approverName', label: 'Approver', render: r => r.approverName ? <span className="text-xs text-gray-600">{r.approverName}</span> : <span className="text-xs text-gray-300">Not set</span> },
     { key: 'status', label: 'Status', render: r => <Badge status={r.status} /> },
     { key: 'createdAt', label: 'Created', render: r => new Date(r.createdAt).toLocaleDateString() },
     { key: '_', label: '', render: () => <ChevronRight size={16} className="text-gray-300" /> },
@@ -67,9 +69,13 @@ export function ProductsPage() {
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           <Textarea label="Description" placeholder="Optional description..." value={form.description}
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          <Select label="Approver" value={form.approverUserId} onChange={e => setForm(f => ({ ...f, approverUserId: e.target.value }))}>
+            <option value="">No approver assigned</option>
+            {plmUsers.map(u => <option key={u.userId} value={u.userId}>{u.fullName} — {u.role}</option>)}
+          </Select>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button onClick={() => createMutation.mutate(form)} disabled={!form.productCode || !form.name || createMutation.isLoading}>
+            <Button onClick={() => createMutation.mutate({ ...form, approverUserId: form.approverUserId || undefined })} disabled={!form.productCode || !form.name || createMutation.isLoading}>
               {createMutation.isLoading ? 'Creating…' : 'Create Product'}
             </Button>
           </div>
@@ -330,6 +336,159 @@ export function ChangeRequestsPage() {
         </div>
       </Modal>
       <ToastContainer />
+    </div>
+  );
+}
+
+// ── BOM PAGE ──────────────────────────────────────────────────
+export function BomPage() {
+  const { toast, ToastContainer } = useToast();
+  const qc = useQueryClient();
+  const [selectedProduct, setSelectedProduct] = useState('');
+  const [selectedVersion, setSelectedVersion] = useState('');
+  const [versions, setVersions] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ componentCode: '', name: '', componentType: '', parentComponentId: '', quantity: '1', unit: '', notes: '' });
+
+  const { data: products = [] } = useQuery('products', plmApi.getProducts);
+  const { data: bomTree = [] } = useQuery(
+    ['bom', selectedVersion],
+    () => plmApi.getBom(selectedVersion),
+    { enabled: !!selectedVersion }
+  );
+
+  const loadVersions = async (productId) => {
+    setSelectedProduct(productId);
+    setSelectedVersion('');
+    if (productId) {
+      const v = await plmApi.getVersions(productId);
+      setVersions(v);
+    } else {
+      setVersions([]);
+    }
+  };
+
+  const flattenBom = (nodes, result = []) => {
+    nodes.forEach(n => { result.push(n); if (n.children) flattenBom(n.children, result); });
+    return result;
+  };
+  const allComponents = flattenBom(bomTree);
+
+  const addMutation = useMutation(data => plmApi.addBomComponent(selectedVersion, data), {
+    onSuccess: () => {
+      qc.invalidateQueries(['bom', selectedVersion]);
+      setShowAdd(false);
+      setForm({ componentCode: '', name: '', componentType: '', parentComponentId: '', quantity: '1', unit: '', notes: '' });
+      toast('Component added', 'success');
+    },
+    onError: e => toast(e.message, 'error'),
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Bill of Materials</h2>
+          <p className="text-sm text-gray-500">View and manage components for a product version</p>
+        </div>
+        <Button onClick={() => setShowAdd(true)} disabled={!selectedVersion}><Plus size={16} />Add Component</Button>
+      </div>
+
+      <Card className="p-4">
+        <div className="grid grid-cols-2 gap-4">
+          <Select label="Product" value={selectedProduct} onChange={e => loadVersions(e.target.value)}>
+            <option value="">Select product…</option>
+            {products.map(p => <option key={p.productId} value={p.productId}>{p.name} ({p.productCode})</option>)}
+          </Select>
+          <Select label="Version" value={selectedVersion} onChange={e => setSelectedVersion(e.target.value)} disabled={!versions.length}>
+            <option value="">Select version…</option>
+            {versions.map(v => <option key={v.versionId} value={v.versionId}>v{v.versionNumber} — {v.status}</option>)}
+          </Select>
+        </div>
+      </Card>
+
+      <Card>
+        {!selectedVersion ? (
+          <p className="text-sm text-gray-400 text-center py-8">Select a product and version to view its BOM</p>
+        ) : bomTree.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-8">No components yet. Click "Add Component" to start building the BOM.</p>
+        ) : (
+          <div className="p-4 space-y-1">
+            {bomTree.map(node => <BomTreeNode key={node.componentId} node={node} depth={0} />)}
+          </div>
+        )}
+      </Card>
+
+      <Modal isOpen={showAdd} onClose={() => setShowAdd(false)} title="Add BOM Component">
+        <div className="space-y-4">
+          <Input label="Component Code *" placeholder="e.g. ENG-001" value={form.componentCode}
+            onChange={e => setForm(f => ({ ...f, componentCode: e.target.value }))} />
+          <Input label="Name *" placeholder="e.g. Engine Assembly" value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          <Select label="Component Type" value={form.componentType} onChange={e => setForm(f => ({ ...f, componentType: e.target.value }))}>
+            <option value="">Select type…</option>
+            <option value="MECHANICAL">Mechanical</option>
+            <option value="ELECTRICAL">Electrical</option>
+            <option value="SOFTWARE">Software</option>
+            <option value="RAW_MATERIAL">Raw Material</option>
+            <option value="ASSEMBLY">Assembly</option>
+          </Select>
+          <Select label="Parent Component (optional)" value={form.parentComponentId} onChange={e => setForm(f => ({ ...f, parentComponentId: e.target.value }))}>
+            <option value="">None (top-level)</option>
+            {allComponents.map(c => <option key={c.componentId} value={c.componentId}>{c.componentCode} — {c.name}</option>)}
+          </Select>
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Quantity" placeholder="1" value={form.quantity}
+              onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} />
+            <Input label="Unit" placeholder="e.g. pcs, kg" value={form.unit}
+              onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} />
+          </div>
+          <Textarea label="Notes" placeholder="Optional notes…" value={form.notes}
+            onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button onClick={() => addMutation.mutate({ ...form, parentComponentId: form.parentComponentId || undefined })}
+              disabled={!form.componentCode || !form.name || addMutation.isLoading}>
+              {addMutation.isLoading ? 'Adding…' : 'Add Component'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+      <ToastContainer />
+    </div>
+  );
+}
+
+function BomTreeNode({ node, depth }) {
+  const [expanded, setExpanded] = useState(true);
+  const hasChildren = node.children && node.children.length > 0;
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors"
+        style={{ marginLeft: `${depth * 24}px` }}>
+        {hasChildren ? (
+          <button onClick={() => setExpanded(e => !e)} className="text-gray-400 hover:text-gray-600">
+            <ChevronRight size={14} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
+          </button>
+        ) : (
+          <span className="w-[14px]" />
+        )}
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono text-gray-400">{node.componentCode}</span>
+            <span className="text-sm font-medium text-gray-800">{node.name}</span>
+            {node.componentType && <Badge status={node.componentType} />}
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Qty: {node.quantity} {node.unit || ''}
+            {node.notes && ` · ${node.notes}`}
+          </p>
+        </div>
+      </div>
+      {hasChildren && expanded && node.children.map(child => (
+        <BomTreeNode key={child.componentId} node={child} depth={depth + 1} />
+      ))}
     </div>
   );
 }

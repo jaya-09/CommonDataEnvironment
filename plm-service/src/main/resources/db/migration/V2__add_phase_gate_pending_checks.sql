@@ -28,7 +28,7 @@ CREATE TABLE phase_gate_pending_checks (
     completed_at            TIMESTAMPTZ,
 
     CONSTRAINT fk_pgpc_version FOREIGN KEY (version_id)
-        REFERENCES product_versions(version_id) ON DELETE CASCADE
+        REFERENCES product_version(version_id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_pgpc_version_phase_status
