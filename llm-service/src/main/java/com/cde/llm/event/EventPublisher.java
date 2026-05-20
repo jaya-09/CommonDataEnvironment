@@ -14,10 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Publishes events to Google Pub/Sub topics.
- * Publishers are cached per topic to avoid recreation overhead.
- */
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -34,6 +30,12 @@ public class EventPublisher {
     @Value("${app.topics.user-profile-updated}")
     private String userProfileUpdatedTopic;
 
+    @Value("${app.topics.phase-gate-check-result}")
+    private String phaseGateResultTopic;
+
+    @Value("${app.topics.enrollment-triggered}")
+    private String enrollmentTriggeredTopic;
+
     private final Map<String, Publisher> publisherCache = new ConcurrentHashMap<>();
 
     public void publishCertificationGranted(CertificationGrantedEvent event, String correlationId) {
@@ -41,7 +43,19 @@ public class EventPublisher {
     }
 
     public void publishUserProfileUpdated(UserProfileUpdatedEvent event, String correlationId) {
-        publish(userProfileUpdatedTopic, EventEnvelope.of("cde.llm.user.profile_updated", event, correlationId));
+        publish(userProfileUpdatedTopic, EventEnvelope.of("cde.llm.user.profile.updated", event, correlationId));
+    }
+
+    /**
+     * Publishes the certification readiness result back to PLM
+     * after evaluating a phase gate check request.
+     */
+    public void publishPhaseGateCheckResult(PhaseGateCheckResultEvent event, String correlationId) {
+        publish(phaseGateResultTopic, EventEnvelope.of("cde.plm.phase.gate.check.result", event, correlationId));
+    }
+
+    public void publishEnrollmentTriggered(EnrollmentTriggeredEvent event, String correlationId) {
+        publish(enrollmentTriggeredTopic, EventEnvelope.of("cde.llm.enrollment.triggered", event, correlationId));
     }
 
     private void publish(String topicName, EventEnvelope envelope) {
@@ -57,8 +71,7 @@ public class EventPublisher {
                             ? envelope.getCorrelationId() : "")
                     .build();
 
-            Publisher publisher = getOrCreatePublisher(topicName);
-            publisher.publish(message);
+            getOrCreatePublisher(topicName).publish(message);
 
             log.info("Published event [type={}, eventId={}, correlationId={}] to topic={}",
                     envelope.getType(), envelope.getEventId(), envelope.getCorrelationId(), topicName);
@@ -70,11 +83,10 @@ public class EventPublisher {
         }
     }
 
-    private Publisher getOrCreatePublisher(String topicName) throws Exception {
+    private Publisher getOrCreatePublisher(String topicName) {
         return publisherCache.computeIfAbsent(topicName, name -> {
             try {
-                ProjectTopicName topic = ProjectTopicName.of(projectId, name);
-                return Publisher.newBuilder(topic).build();
+                return Publisher.newBuilder(ProjectTopicName.of(projectId, name)).build();
             } catch (Exception e) {
                 throw new RuntimeException("Failed to create publisher for topic: " + name, e);
             }

@@ -41,8 +41,12 @@ app:
       emulator-host: localhost:8085
   topics:
     ncr-raised: cde.qlm.ncr.raised
+    ncr-closed: cde.qlm.ncr.closed
+    capa-raised: cde.qlm.capa.raised
     capa-closed: cde.qlm.capa.closed
     audit-finding: cde.qlm.audit.finding
+    risk-registered: cde.qlm.risk.registered
+    phase-gate-check-result: cde.plm.phase.gate.check.result
 
 logging:
   level:

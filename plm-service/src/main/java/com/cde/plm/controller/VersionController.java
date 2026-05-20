@@ -1,5 +1,6 @@
 package com.cde.plm.controller;
 
+import com.cde.plm.audit.AuditEntityType;
 import com.cde.plm.dto.*;
 import com.cde.plm.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,12 +23,22 @@ public class VersionController {
         return ResponseEntity.ok(productService.getVersion(versionId));
     }
 
-    @PostMapping("/{versionId}/phase") @Operation(summary = "Advance lifecycle phase")
+    @PostMapping("/{versionId}/phase")
+    @Operation(summary = "Initiate async phase gate check — dispatches to QLM and LLM via Pub/Sub. Poll /phase-gate-status for result.")
     public ResponseEntity<PhaseGateResult> advancePhase(@PathVariable UUID versionId,
             @Valid @RequestBody PhaseTransitionRequest req,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") String userId,
             @RequestHeader(value = "X-Correlation-Id", defaultValue = "") String correlationId) {
-        return ResponseEntity.ok(productService.advancePhase(versionId, req, UUID.fromString(userId), correlationId));
+        return ResponseEntity.accepted()
+                .body(productService.advancePhase(versionId, req, UUID.fromString(userId), correlationId));
+    }
+
+    @GetMapping("/{versionId}/phase-gate-status")
+    @Operation(summary = "Poll the result of an async phase gate check")
+    public ResponseEntity<PhaseGateResult> getPhaseGateStatus(
+            @PathVariable UUID versionId,
+            @RequestParam String targetPhase) {
+        return ResponseEntity.ok(productService.getPhaseGateStatus(versionId, targetPhase));
     }
 
     @GetMapping("/{versionId}/change-requests") @Operation(summary = "List change requests")
@@ -56,6 +67,6 @@ public class VersionController {
 
     @GetMapping("/{versionId}/audit") @Operation(summary = "Get audit trail")
     public ResponseEntity<List<AuditLogEntry>> getAudit(@PathVariable UUID versionId) {
-        return ResponseEntity.ok(productService.getAuditLog("VERSION", versionId));
+        return ResponseEntity.ok(productService.getAuditLog(AuditEntityType.VERSION, versionId));
     }
 }

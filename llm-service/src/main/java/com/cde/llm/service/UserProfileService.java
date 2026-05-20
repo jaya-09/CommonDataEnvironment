@@ -1,5 +1,7 @@
 package com.cde.llm.service;
 
+import com.cde.llm.audit.AuditAction;
+import com.cde.llm.audit.AuditEntityType;
 import com.cde.llm.dto.*;
 import com.cde.llm.entity.UserCertification;
 import com.cde.llm.entity.UserProfile;
@@ -53,7 +55,7 @@ public class UserProfileService {
                 .build();
 
         user = userProfileRepository.save(user);
-        auditLogService.log("USER_PROFILE", user.getUserId(), "CREATED", null,
+        auditLogService.log(AuditEntityType.USER_PROFILE, user.getUserId(), AuditAction.CREATED, null,
                 mapToResponse(user), null, "USER", correlationId);
 
         // Publish to PLM and QLM so they can cache the user shadow copy
@@ -88,7 +90,7 @@ public class UserProfileService {
         user.setUpdatedAt(OffsetDateTime.now());
 
         user = userProfileRepository.save(user);
-        auditLogService.log("USER_PROFILE", user.getUserId(), "UPDATED",
+        auditLogService.log(AuditEntityType.USER_PROFILE, user.getUserId(), AuditAction.UPDATED,
                 oldValue, mapToResponse(user), null, "USER", correlationId);
 
         // Propagate changes to PLM and QLM via event
@@ -164,7 +166,7 @@ public class UserProfileService {
         UserProfile user = userProfileRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
         var mandatoryCourses = courseRepository.findByMandatoryForPhase(phase);
-        var activeCerts = certificationRepository.findByUserAndStatus(user, com.cde.llm.entity.UserCertification.CertStatus.ACTIVE);
+        var activeCerts = certificationRepository.findByUserAndStatus(user, UserCertification.CertStatus.ACTIVE);
         var certifiedCourseIds = activeCerts.stream()
                 .map(c -> c.getCourse().getCourseId()).collect(java.util.stream.Collectors.toSet());
         var missing = mandatoryCourses.stream()

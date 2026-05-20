@@ -1,8 +1,11 @@
 package com.cde.llm.service;
 
+import com.cde.llm.audit.AuditAction;
+import com.cde.llm.audit.AuditEntityType;
 import com.cde.llm.dto.*;
 import com.cde.llm.entity.*;
 import com.cde.llm.event.CertificationGrantedEvent;
+import com.cde.llm.event.EnrollmentTriggeredEvent;
 import com.cde.llm.event.EventPublisher;
 import com.cde.llm.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -68,7 +71,16 @@ public class EnrollmentService {
                 .build();
 
         enrollment = enrollmentRepository.save(enrollment);
-        auditLogService.log("ENROLLMENT", enrollment.getEnrollmentId(), "ENROLLED",
+        eventPublisher.publishEnrollmentTriggered(EnrollmentTriggeredEvent.builder()
+                .enrollmentId(enrollment.getEnrollmentId())
+                .userId(enrollment.getUser().getUserId())
+                .courseId(enrollment.getCourse().getCourseId())
+                .courseCode(enrollment.getCourse().getCourseCode())
+                .triggerSource(enrollment.getTriggerSource().name())
+                .triggerRefId(enrollment.getTriggerRefId())
+                .triggerRefType(enrollment.getTriggerRefType())
+                .build(), correlationId);
+        auditLogService.log(AuditEntityType.ENROLLMENT, enrollment.getEnrollmentId(), AuditAction.ENROLLED,
                 null, mapToEnrollmentResponse(enrollment),
                 user.getUserId(), "USER", correlationId);
 
@@ -83,7 +95,7 @@ public class EnrollmentService {
      * Complete training and issue certification if score >= passing score.
      * Publishes cde.llm.certification.granted event on success.
      */
-    @CacheEvict(value = "cert-status", key = "#request.enrollmentId")
+    @CacheEvict(value = "cert-status", allEntries = true)
     @Transactional
     public CompletionResponse completeTraining(CompleteTrainingRequest request, String correlationId) {
         TrainingEnrollment enrollment = enrollmentRepository.findById(request.getEnrollmentId())
@@ -104,6 +116,11 @@ public class EnrollmentService {
 
         enrollmentRepository.save(enrollment);
 
+        AuditAction enrollmentAction = passed ? AuditAction.COMPLETED : AuditAction.FAILED;
+        auditLogService.log(AuditEntityType.ENROLLMENT, enrollment.getEnrollmentId(), enrollmentAction,
+                null, mapToEnrollmentResponse(enrollment),
+                enrollment.getUser().getUserId(), "USER", correlationId);
+
         if (passed) {
             // Issue certification
             String certNumber = generateCertNumber(enrollment);
@@ -119,7 +136,7 @@ public class EnrollmentService {
                     .build();
 
             cert = certificationRepository.save(cert);
-            auditLogService.log("CERTIFICATION", cert.getCertId(), "ISSUED",
+            auditLogService.log(AuditEntityType.CERTIFICATION, cert.getCertId(), AuditAction.ISSUED,
                     null, cert, enrollment.getUser().getUserId(), "USER", correlationId);
 
             // Publish event — PLM will use this to evaluate phase gate

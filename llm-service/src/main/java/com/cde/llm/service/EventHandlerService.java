@@ -4,6 +4,10 @@ import com.cde.llm.dto.EnrollmentRequest;
 import com.cde.llm.entity.TrainingCourse;
 import com.cde.llm.entity.UserProfile;
 import com.cde.llm.event.EventEnvelope;
+import com.cde.llm.event.PhaseGateCheckRequestedEvent;
+import com.cde.llm.event.PhaseGateCheckResultEvent;
+import com.cde.llm.event.EventPublisher;
+
 import com.cde.llm.repository.ProcessedEventRepository;
 import com.cde.llm.repository.TrainingCourseRepository;
 import com.cde.llm.repository.UserProfileRepository;
@@ -30,6 +34,7 @@ public class EventHandlerService {
     private final UserProfileRepository userProfileRepository;
     private final TrainingCourseRepository courseRepository;
     private final ObjectMapper objectMapper;
+    private final EventPublisher eventPublisher;
 
     @Transactional
     public void handle(EventEnvelope envelope) {
@@ -41,9 +46,10 @@ public class EventHandlerService {
 
         // ── ROUTE ──
         switch (envelope.getType()) {
-            case "cde.plm.phase.transitioned"     -> handlePhaseTransitioned(envelope);
-            case "cde.qlm.ncr.raised"             -> handleNcrRaised(envelope);
-            case "cde.qlm.audit.finding"          -> handleAuditFinding(envelope);
+            case "cde.plm.phase.transitioned"          -> handlePhaseTransitioned(envelope);
+            case "cde.qlm.ncr.raised"                  -> handleNcrRaised(envelope);
+            case "cde.qlm.audit.finding"               -> handleAuditFinding(envelope);
+            case "cde.plm.phase.gate.check.requested"  -> handlePhaseGateCheckRequested(envelope);
             default -> log.warn("No handler for event type: {}", envelope.getType());
         }
 
@@ -142,5 +148,36 @@ public class EventHandlerService {
                 enrollmentService.enroll(req, envelope.getCorrelationId());
             }
         });
+    }
+
+    /**
+     * PLM phase gate check request → evaluate certification readiness for target phase.
+     * Publishes result back on cde.plm.phase.gate.check.result.
+     */
+    private void handlePhaseGateCheckRequested(EventEnvelope envelope) {
+        PhaseGateCheckRequestedEvent event =
+                objectMapper.convertValue(envelope.getPayload(), PhaseGateCheckRequestedEvent.class);
+
+        com.cde.llm.dto.PhaseReadinessResponse readiness =
+                enrollmentService.checkPhaseReadiness(event.getTargetPhase());
+
+        boolean passed = readiness.isReady();
+        String blockReason = passed ? null
+                : readiness.getUncertifiedCount() + " staff member(s) missing certifications for phase " + event.getTargetPhase();
+
+        PhaseGateCheckResultEvent result = PhaseGateCheckResultEvent.builder()
+                .gateCorrelationId(event.getGateCorrelationId())
+                .versionId(event.getVersionId())
+                .targetPhase(event.getTargetPhase())
+                .checkerService("LLM")
+                .passed(passed)
+                .blockReason(blockReason)
+                .uncertifiedCount(readiness.getUncertifiedCount())
+                .build();
+
+        eventPublisher.publishPhaseGateCheckResult(result, envelope.getCorrelationId());
+
+        log.info("Phase gate certification check completed [versionId={}, targetPhase={}, passed={}, uncertified={}]",
+                event.getVersionId(), event.getTargetPhase(), passed, readiness.getUncertifiedCount());
     }
 }

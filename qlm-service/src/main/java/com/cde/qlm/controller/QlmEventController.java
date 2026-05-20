@@ -1,5 +1,6 @@
 package com.cde.qlm.controller;
 
+import com.cde.qlm.event.PhaseGateCheckRequestedEvent;
 import com.cde.qlm.event.UserProfileUpdatedEvent;
 import com.cde.qlm.service.QlmService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,9 +25,12 @@ public class QlmEventController {
             String type = (String) envelope.get("type");
             String correlationId = (String) envelope.getOrDefault("correlationId", "");
             Object payload = envelope.get("payload");
-            if ("cde.llm.user.profile_updated".equals(type)) {
-                qlmService.handleUserProfileUpdated(
+            switch (type) {
+                case "cde.llm.user.profile.updated" -> qlmService.handleUserProfileUpdated(
                         objectMapper.convertValue(payload, UserProfileUpdatedEvent.class), correlationId);
+                case "cde.plm.phase.gate.check.requested" -> qlmService.handlePhaseGateCheckRequested(
+                        objectMapper.convertValue(payload, PhaseGateCheckRequestedEvent.class), correlationId);
+                default -> log.debug("QLM ignoring event type: {}", type);
             }
             return ResponseEntity.ok().build();
         } catch (Exception e) {

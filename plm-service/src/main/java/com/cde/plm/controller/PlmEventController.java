@@ -27,8 +27,10 @@ public class PlmEventController {
             switch (type) {
                 case "cde.qlm.ncr.raised" -> productService.handleNcrRaised(
                         objectMapper.convertValue(payload, NcrRaisedEvent.class), correlationId);
-                case "cde.llm.user.profile_updated" -> productService.handleUserProfileUpdated(
+                case "cde.llm.user.profile.updated" -> productService.handleUserProfileUpdated(
                         objectMapper.convertValue(payload, UserProfileUpdatedEvent.class), correlationId);
+                case "cde.plm.phase.gate.check.result" -> productService.handlePhaseGateCheckResult(
+                        objectMapper.convertValue(payload, PhaseGateCheckResultEvent.class), correlationId);
                 default -> log.debug("PLM ignoring event type: {}", type);
             }
             return ResponseEntity.ok().build();
