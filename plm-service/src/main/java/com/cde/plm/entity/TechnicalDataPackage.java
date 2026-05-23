@@ -29,6 +29,8 @@ public class TechnicalDataPackage {
     private UUID approvedBy;
     @Column(name = "approved_at")
     private OffsetDateTime approvedAt;
+    @Column(name = "uploaded_by")
+    private UUID uploadedBy;
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
     public enum TdpStatus { PENDING, APPROVED, REJECTED }

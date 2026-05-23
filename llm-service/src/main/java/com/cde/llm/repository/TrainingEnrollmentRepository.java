@@ -22,6 +22,10 @@ public interface TrainingEnrollmentRepository extends JpaRepository<TrainingEnro
     Optional<TrainingEnrollment> findByUserAndCourseAndStatus(
             UserProfile user, TrainingCourse course, TrainingEnrollment.EnrollmentStatus status);
 
+    /** Returns the active enrollment regardless of whether it is ENROLLED or IN_PROGRESS. */
+    Optional<TrainingEnrollment> findFirstByUserAndCourseAndStatusIn(
+            UserProfile user, TrainingCourse course, List<TrainingEnrollment.EnrollmentStatus> statuses);
+
     boolean existsByUserAndCourseAndStatusIn(
             UserProfile user, TrainingCourse course, List<TrainingEnrollment.EnrollmentStatus> statuses);
 

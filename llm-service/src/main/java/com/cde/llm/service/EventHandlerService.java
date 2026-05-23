@@ -113,14 +113,19 @@ public class EventHandlerService {
                     .findByRoleAndActiveTrue(UserProfile.Role.ENGINEER);
 
             for (UserProfile engineer : engineers) {
-                EnrollmentRequest req = EnrollmentRequest.builder()
-                        .userId(engineer.getUserId())
-                        .courseId(course.getCourseId())
-                        .triggerSource("PUBSUB")
-                        .triggerRefType("NCR")
-                        .triggerRefId(UUID.fromString(payload.get("ncrId").toString()))
-                        .build();
-                enrollmentService.enroll(req, envelope.getCorrelationId());
+                try {
+                    EnrollmentRequest req = EnrollmentRequest.builder()
+                            .userId(engineer.getUserId())
+                            .courseId(course.getCourseId())
+                            .triggerSource("PUBSUB")
+                            .triggerRefType("NCR")
+                            .triggerRefId(UUID.fromString(payload.get("ncrId").toString()))
+                            .build();
+                    enrollmentService.enroll(req, envelope.getCorrelationId());
+                } catch (Exception e) {
+                    log.error("Failed to auto-enroll user {} for NCR-triggered course {}: {}",
+                            engineer.getUserId(), course.getCourseId(), e.getMessage());
+                }
             }
         });
     }
@@ -138,14 +143,19 @@ public class EventHandlerService {
                     : userProfileRepository.findByRoleAndActiveTrue(UserProfile.Role.ENGINEER);
 
             for (UserProfile user : targets) {
-                EnrollmentRequest req = EnrollmentRequest.builder()
-                        .userId(user.getUserId())
-                        .courseId(course.getCourseId())
-                        .triggerSource("PUBSUB")
-                        .triggerRefType("AUDIT_FINDING")
-                        .triggerRefId(UUID.fromString(payload.get("findingId").toString()))
-                        .build();
-                enrollmentService.enroll(req, envelope.getCorrelationId());
+                try {
+                    EnrollmentRequest req = EnrollmentRequest.builder()
+                            .userId(user.getUserId())
+                            .courseId(course.getCourseId())
+                            .triggerSource("PUBSUB")
+                            .triggerRefType("AUDIT_FINDING")
+                            .triggerRefId(UUID.fromString(payload.get("findingId").toString()))
+                            .build();
+                    enrollmentService.enroll(req, envelope.getCorrelationId());
+                } catch (Exception e) {
+                    log.error("Failed to auto-enroll user {} for audit-finding-triggered course {}: {}",
+                            user.getUserId(), course.getCourseId(), e.getMessage());
+                }
             }
         });
     }

@@ -13,10 +13,12 @@ public class ProductVersionResponse {
     private String productCode;
     private String productName;
     private String versionNumber;
+    private String description;
     private String status;
     private String currentPhase;
     private Integer phaseSequence;
     private OffsetDateTime releasedAt;
+    private UUID releasedBy;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

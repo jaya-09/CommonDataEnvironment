@@ -9,5 +9,4 @@ public class LifecyclePhaseResponse {
     private String phaseName;
     private String displayName;
     private Integer sequenceOrder;
-    private boolean active;
 }

@@ -1,5 +1,6 @@
 package com.cde.plm.dto;
 
+import com.cde.plm.entity.ChangeRequest;
 import jakarta.validation.constraints.*;
 import lombok.*;
 
@@ -9,5 +10,5 @@ public class CreateChangeRequestRequest {
     public String description;
     public String reason;
     public String impactAnalysis;
-    public String crType;
+    public ChangeRequest.CrType crType;
 }

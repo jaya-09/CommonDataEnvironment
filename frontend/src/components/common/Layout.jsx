@@ -1,151 +1,153 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import {
-  LayoutDashboard, Package, ShieldCheck, GraduationCap,
-  ChevronLeft, ChevronRight, Bell, BarChart2
-} from 'lucide-react';
+import { Bell, ChevronDown, BarChart2 } from 'lucide-react';
 
 const NAV = [
-  { label: 'Dashboard', icon: LayoutDashboard, to: '/' },
+  { label: 'Dashboard', to: '/' },
   {
-    label: 'PLM', icon: Package, to: '/plm',
+    label: 'PLM',
     sub: [
-      { label: 'Products', to: '/plm/products' },
-      { label: 'Versions', to: '/plm/versions' },
-      { label: 'Change Requests', to: '/plm/change-requests' },
-      { label: 'Lifecycle Phases', to: '/plm/phases' },
-      { label: 'Bill of Materials', to: '/plm/bom' },
-    ]
+      { label: 'Products',        to: '/plm/products',        desc: 'Manage product catalog' },
+      { label: 'Change Requests', to: '/plm/change-requests', desc: 'Track CRs and approvals' },
+      { label: 'Lifecycle Phases',to: '/plm/phases',          desc: 'Phase configuration' },
+      { label: 'Bill of Materials',to: '/plm/bom',            desc: 'BOM tree management' },
+      { label: 'TDP Documents',   to: '/plm/documents',       desc: 'Technical data packages' },
+    ],
   },
   {
-    label: 'QLM', icon: ShieldCheck, to: '/qlm',
+    label: 'QLM',
     sub: [
-      { label: 'Non-Conformances', to: '/qlm/ncr' },
-      { label: 'CAPA', to: '/qlm/capa' },
-      { label: 'Quality Audits', to: '/qlm/audits' },
-      { label: 'Risk Register', to: '/qlm/risks' },
-      { label: 'Documents', to: '/qlm/documents' },
-    ]
+      { label: 'Non-Conformances', to: '/qlm/ncr',       desc: 'Quality defect reports' },
+      { label: 'CAPA',             to: '/qlm/capa',      desc: 'Corrective actions' },
+      { label: 'Quality Audits',   to: '/qlm/audits',    desc: 'Audit management' },
+      { label: 'Risk Register',    to: '/qlm/risks',     desc: 'Risk tracking' },
+      { label: 'Documents',        to: '/qlm/documents', desc: 'Controlled documents' },
+    ],
   },
-  { label: 'Analytics', icon: BarChart2, to: '/analytics' },
+  { label: 'Analytics', to: '/analytics' },
   {
-    label: 'LLM', icon: GraduationCap, to: '/llm',
+    label: 'LLM',
     sub: [
-      { label: 'Users', to: '/llm/users' },
-      { label: 'Enrollments', to: '/llm/enrollments' },
-      { label: 'Phase Readiness', to: '/llm/phase-readiness' },
-    ]
+      { label: 'Users',            to: '/llm/users',           desc: 'User profiles' },
+      { label: 'Enrollments',      to: '/llm/enrollments',     desc: 'Training enrollments' },
+      { label: 'Phase Readiness',  to: '/llm/phase-readiness', desc: 'Certification status' },
+    ],
   },
 ];
 
-export default function Layout({ children }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [openSections, setOpenSections] = useState({ PLM: true, QLM: false, LLM: false });
+function Dropdown({ item, isActive }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
   const location = useLocation();
+  const isParentActive = item.sub?.some(s => location.pathname.startsWith(s.to));
 
-  const toggle = label => setOpenSections(s => ({ ...s, [label]: !s[label] }));
-  const isActive = to => location.pathname === to || (to !== '/' && location.pathname.startsWith(to));
-
-  const currentLabel = NAV.flatMap(n => [n, ...(n.sub || [])]).find(n => n.to === location.pathname)?.label
-    || 'Common Data Environment';
+  useEffect(() => {
+    const handleClickOutside = e => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   return (
-    <div className="flex h-screen bg-[#fafafa] overflow-hidden">
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1 px-1 py-2 text-sm font-medium transition-colors border-b-2 ${
+          isParentActive
+            ? 'text-gray-900 border-gray-900'
+            : 'text-gray-500 border-transparent hover:text-gray-900'
+        }`}
+      >
+        {item.label}
+        <ChevronDown size={13} className={`transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
+      </button>
 
-      {/* Sidebar */}
-      <aside className={`flex flex-col bg-white border-r border-gray-100 transition-all duration-200 ${collapsed ? 'w-[60px]' : 'w-56'}`}>
-
-        {/* Logo */}
-        <div className={`flex items-center gap-3 border-b border-gray-100 flex-shrink-0 ${collapsed ? 'px-3 py-[18px] justify-center' : 'px-5 py-[18px]'}`}>
-          <div className="w-7 h-7 bg-gray-900 rounded-md flex items-center justify-center flex-shrink-0">
-            <span className="text-white text-[9px] font-bold tracking-widest">CDE</span>
-          </div>
-          {!collapsed && <span className="font-semibold text-gray-900 text-sm tracking-tight">CDE Platform</span>}
+      {open && (
+        <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-100 rounded-xl shadow-lg shadow-gray-100/80 z-50 py-2 overflow-hidden">
+          {item.sub.map(s => (
+            <Link
+              key={s.to}
+              to={s.to}
+              onClick={() => setOpen(false)}
+              className={`flex flex-col px-4 py-2.5 hover:bg-gray-50 transition-colors ${
+                location.pathname === s.to ? 'bg-gray-50' : ''
+              }`}
+            >
+              <span className={`text-sm font-medium ${location.pathname === s.to ? 'text-gray-900' : 'text-gray-700'}`}>
+                {s.label}
+              </span>
+              <span className="text-xs text-gray-400 mt-0.5">{s.desc}</span>
+            </Link>
+          ))}
         </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Nav */}
-        <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-0.5">
-          {NAV.map(item => {
-            const Icon = item.icon;
-            const active = isActive(item.to);
-            return (
-              <div key={item.label}>
-                {item.sub ? (
-                  <>
-                    <button
-                      onClick={() => !collapsed && toggle(item.label)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors
-                        ${active
-                          ? 'bg-gray-100 text-gray-900 font-semibold'
-                          : 'text-gray-500 font-medium hover:bg-gray-50 hover:text-gray-800'}`}>
-                      <Icon size={16} className="flex-shrink-0" />
-                      {!collapsed && (
-                        <>
-                          <span className="flex-1 text-left">{item.label}</span>
-                          <ChevronRight size={13} className={`text-gray-300 transition-transform ${openSections[item.label] ? 'rotate-90' : ''}`} />
-                        </>
-                      )}
-                    </button>
-                    {!collapsed && openSections[item.label] && (
-                      <div className="ml-4 mt-0.5 pl-3 border-l border-gray-100 space-y-0.5 pb-1">
-                        {item.sub.map(s => (
-                          <Link key={s.to} to={s.to}
-                            className={`flex items-center px-2 py-1.5 rounded-md text-sm transition-colors
-                              ${location.pathname === s.to
-                                ? 'text-gray-900 font-semibold'
-                                : 'text-gray-400 font-medium hover:text-gray-800'}`}>
-                            {s.label}
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <Link to={item.to}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors
-                      ${active
-                        ? 'bg-gray-100 text-gray-900 font-semibold'
-                        : 'text-gray-500 font-medium hover:bg-gray-50 hover:text-gray-800'}`}>
-                    <Icon size={16} className="flex-shrink-0" />
-                    {!collapsed && item.label}
-                  </Link>
-                )}
-              </div>
-            );
-          })}
-        </nav>
+export default function Layout({ children }) {
+  const location = useLocation();
 
-        {/* Collapse toggle */}
-        <div className="px-2 py-3 border-t border-gray-100 flex-shrink-0">
-          <button
-            onClick={() => setCollapsed(c => !c)}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-50 transition-colors text-sm">
-            {collapsed ? <ChevronRight size={15} /> : <><ChevronLeft size={15} /><span className="text-xs font-medium">Collapse</span></>}
-          </button>
-        </div>
-      </aside>
+  const pageTitle = NAV
+    .flatMap(n => n.sub ? n.sub : [n])
+    .find(n => location.pathname === n.to || (n.to !== '/' && location.pathname.startsWith(n.to)))
+    ?.label ?? 'Dashboard';
 
-      {/* Main */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+  return (
+    <div className="min-h-screen bg-white">
 
-        {/* Top bar */}
-        <header className="bg-white border-b border-gray-100 px-8 h-14 flex items-center justify-between flex-shrink-0">
-          <p className="text-sm font-semibold text-gray-900 tracking-tight">{currentLabel}</p>
-          <div className="flex items-center gap-2">
-            <button className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors">
+      {/* ── Top nav bar (Medium style) ─────────────────────────────── */}
+      <header className="sticky top-0 z-40 bg-white border-b border-gray-100">
+        <div className="max-w-screen-xl mx-auto px-6 h-14 flex items-center justify-between gap-8">
+
+          {/* Logo */}
+          <Link to="/" className="flex items-center gap-2.5 flex-shrink-0">
+            <div className="w-7 h-7 bg-gray-900 rounded-lg flex items-center justify-center">
+              <span className="text-white text-[9px] font-bold tracking-widest">CDE</span>
+            </div>
+            <span className="font-semibold text-gray-900 text-sm tracking-tight hidden sm:block">
+              CDE Platform
+            </span>
+          </Link>
+
+          {/* Nav items */}
+          <nav className="flex items-center gap-1 flex-1">
+            {NAV.map(item =>
+              item.sub ? (
+                <Dropdown key={item.label} item={item} />
+              ) : (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`px-1 py-2 text-sm font-medium transition-colors border-b-2 ${
+                    location.pathname === item.to
+                      ? 'text-gray-900 border-gray-900'
+                      : 'text-gray-500 border-transparent hover:text-gray-900'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              )
+            )}
+          </nav>
+
+          {/* Right actions */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
               <Bell size={16} />
             </button>
-            <div className="w-7 h-7 bg-gray-900 rounded-full flex items-center justify-center ml-1">
-              <span className="text-white text-[10px] font-semibold">U</span>
+            <div className="w-8 h-8 bg-gray-900 rounded-full flex items-center justify-center cursor-pointer hover:bg-gray-700 transition-colors ml-1">
+              <span className="text-white text-xs font-semibold">S</span>
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-8">
-          {children}
-        </main>
-      </div>
+      {/* ── Page content ───────────────────────────────────────────── */}
+      <main className="max-w-screen-xl mx-auto px-6 py-10">
+        {children}
+      </main>
     </div>
   );
 }

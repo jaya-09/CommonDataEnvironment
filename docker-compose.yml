@@ -154,118 +154,98 @@ services:
           sleep 3
         done
 
-        echo "=== Creating topics ==="
+        echo "=== Creating domain topics (3 total) ==="
+        # Domain topic model: one topic per publishing service.
+        # Each consumer subscribes to the domain topics it needs and routes
+        # internally by the eventType field inside the message envelope.
         for topic in \
-          cde.plm.version.released \
-          cde.plm.phase.transitioned \
-          cde.plm.change.request.approved \
-          cde.plm.phase.gate.check.requested \
-          cde.plm.phase.gate.check.result \
-          cde.plm.version.status.changed \
-          cde.qlm.ncr.raised \
-          cde.qlm.ncr.closed \
-          cde.qlm.capa.raised \
-          cde.qlm.capa.closed \
-          cde.qlm.audit.finding \
-          cde.qlm.risk.registered \
-          cde.llm.certification.granted \
-          cde.llm.user.profile.updated \
-          cde.llm.enrollment.triggered; do
+          cde.plm.events \
+          cde.qlm.events \
+          cde.llm.events; do
             curl -s -X PUT "$BASE/topics/$topic" > /dev/null 2>&1 || true
             echo "  topic ok: $topic"
         done
 
-        echo "=== Creating subscriptions ==="
+        echo "=== Creating subscriptions (9 total) ==="
 
-        # PLM subscriptions
-        curl -s -X PUT "$BASE/subscriptions/plm-ncr-raised-sub" \
+        # ── PLM receives from QLM and LLM ────────────────────────────────────
+        # Relevant eventTypes: cde.qlm.ncr.raised, cde.plm.phase.gate.check.result (from QLM)
+        curl -s -X PUT "$BASE/subscriptions/plm-from-qlm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.ncr.raised\",\"pushConfig\":{\"pushEndpoint\":\"http://plm-service:8081/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.qlm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://plm-service:8081/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        curl -s -X PUT "$BASE/subscriptions/plm-user-profile-updated-sub" \
+        # Relevant eventTypes: cde.llm.user.profile.updated, cde.plm.phase.gate.check.result (from LLM)
+        curl -s -X PUT "$BASE/subscriptions/plm-from-llm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.llm.user.profile.updated\",\"pushConfig\":{\"pushEndpoint\":\"http://plm-service:8081/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.llm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://plm-service:8081/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        curl -s -X PUT "$BASE/subscriptions/plm-phase-gate-check-result-sub" \
+        # ── QLM receives from PLM and LLM ────────────────────────────────────
+        # Relevant eventTypes: cde.plm.version.released, cde.plm.change.request.approved,
+        #                      cde.plm.phase.gate.check.requested
+        curl -s -X PUT "$BASE/subscriptions/qlm-from-plm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.phase.gate.check.result\",\"pushConfig\":{\"pushEndpoint\":\"http://plm-service:8081/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.plm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://qlm-service:8082/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        # QLM subscriptions
-        curl -s -X PUT "$BASE/subscriptions/qlm-version-released-sub" \
+        # Relevant eventTypes: cde.llm.user.profile.updated
+        curl -s -X PUT "$BASE/subscriptions/qlm-from-llm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.version.released\",\"pushConfig\":{\"pushEndpoint\":\"http://qlm-service:8082/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.llm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://qlm-service:8082/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        curl -s -X PUT "$BASE/subscriptions/qlm-change-request-approved-sub" \
+        # ── LLM receives from PLM and QLM ────────────────────────────────────
+        # Relevant eventTypes: cde.plm.phase.transitioned, cde.plm.phase.gate.check.requested
+        curl -s -X PUT "$BASE/subscriptions/llm-from-plm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.change.request.approved\",\"pushConfig\":{\"pushEndpoint\":\"http://qlm-service:8082/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.plm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://llm-service:8083/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        curl -s -X PUT "$BASE/subscriptions/qlm-user-profile-updated-sub" \
+        # Relevant eventTypes: cde.qlm.ncr.raised, cde.qlm.audit.finding
+        curl -s -X PUT "$BASE/subscriptions/llm-from-qlm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.llm.user.profile.updated\",\"pushConfig\":{\"pushEndpoint\":\"http://qlm-service:8082/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.qlm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://llm-service:8083/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        curl -s -X PUT "$BASE/subscriptions/qlm-phase-gate-check-requested-sub" \
+        # ── Analytics receives from all three domains ─────────────────────────
+        # Relevant PLM eventTypes: cde.plm.version.released, cde.plm.phase.transitioned,
+        #                          cde.plm.version.status.changed
+        curl -s -X PUT "$BASE/subscriptions/analytics-from-plm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.phase.gate.check.requested\",\"pushConfig\":{\"pushEndpoint\":\"http://qlm-service:8082/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.plm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        # LLM subscriptions
-        curl -s -X PUT "$BASE/subscriptions/llm-phase-transitioned-sub" \
+        # Relevant QLM eventTypes: cde.qlm.ncr.raised, cde.qlm.ncr.closed, cde.qlm.capa.raised,
+        #                          cde.qlm.capa.closed, cde.qlm.risk.registered
+        curl -s -X PUT "$BASE/subscriptions/analytics-from-qlm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.phase.transitioned\",\"pushConfig\":{\"pushEndpoint\":\"http://llm-service:8083/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.qlm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        curl -s -X PUT "$BASE/subscriptions/llm-ncr-raised-sub" \
+        # Relevant LLM eventTypes: cde.llm.certification.granted, cde.llm.enrollment.triggered
+        curl -s -X PUT "$BASE/subscriptions/analytics-from-llm-sub" \
           -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.ncr.raised\",\"pushConfig\":{\"pushEndpoint\":\"http://llm-service:8083/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+          -d "{\"topic\":\"$BASE/topics/cde.llm.events\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
 
-        curl -s -X PUT "$BASE/subscriptions/llm-audit-finding-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.audit.finding\",\"pushConfig\":{\"pushEndpoint\":\"http://llm-service:8083/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+        echo "=== Pub/Sub setup complete (3 topics, 9 subscriptions) ==="
+    networks:
+      - cde-network
 
-        curl -s -X PUT "$BASE/subscriptions/llm-phase-gate-check-requested-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.phase.gate.check.requested\",\"pushConfig\":{\"pushEndpoint\":\"http://llm-service:8083/internal/events\"},\"ackDeadlineSeconds\":30}" || true
+  # ─────────────────────────────────────────
+  # MINIO — S3-compatible object storage for TDP documents
+  # Access console at http://localhost:9001  (user: minioadmin / minioadmin)
+  # ─────────────────────────────────────────
 
-        # Analytics subscriptions
-        curl -s -X PUT "$BASE/subscriptions/analytics-version-released-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.version.released\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-phase-transitioned-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.phase.transitioned\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-ncr-raised-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.ncr.raised\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-capa-closed-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.capa.closed\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-certification-granted-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.llm.certification.granted\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-ncr-closed-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.ncr.closed\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-capa-raised-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.capa.raised\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-risk-registered-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.qlm.risk.registered\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-version-status-changed-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.plm.version.status.changed\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        curl -s -X PUT "$BASE/subscriptions/analytics-enrollment-triggered-sub" \
-          -H "Content-Type: application/json" \
-          -d "{\"topic\":\"$BASE/topics/cde.llm.enrollment.triggered\",\"pushConfig\":{\"pushEndpoint\":\"http://analytics-service:8084/internal/events\"},\"ackDeadlineSeconds\":30}" || true
-
-        echo "=== Pub/Sub setup complete ==="
+  minio:
+    image: minio/minio:latest
+    container_name: cde-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - cde-network
 
@@ -320,6 +300,9 @@ services:
       PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
       GCP_PROJECT_ID: cde-local
       LLM_SERVICE_URL: http://llm-service:8083
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
     depends_on:
       plm-db:
         condition: service_healthy
@@ -327,6 +310,8 @@ services:
         condition: service_healthy
       pubsub-setup:
         condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     restart: on-failure
     networks:
       - cde-network
@@ -426,6 +411,7 @@ volumes:
   llm-db-data:
   analytics-db-data:
   redis-data:
+  minio-data:
 
 networks:
   cde-network:

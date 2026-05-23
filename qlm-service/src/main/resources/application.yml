@@ -40,13 +40,31 @@ app:
     pubsub:
       emulator-host: localhost:8085
   topics:
-    ncr-raised: cde.qlm.ncr.raised
-    ncr-closed: cde.qlm.ncr.closed
-    capa-raised: cde.qlm.capa.raised
-    capa-closed: cde.qlm.capa.closed
-    audit-finding: cde.qlm.audit.finding
-    risk-registered: cde.qlm.risk.registered
-    phase-gate-check-result: cde.plm.phase.gate.check.result
+    # Domain topic — all QLM events go here (including phase gate results back to PLM).
+    # Consumers subscribe to this topic and route internally by eventType.
+    qlm-events: cde.qlm.events
+
+resilience4j:
+  retry:
+    instances:
+      pubsub-publish:
+        max-attempts: 3                      # 1 original + 2 retries
+        wait-duration: 500ms                 # 500ms → 1000ms (exponential)
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - java.lang.RuntimeException
+          - java.io.IOException
+
+  circuitbreaker:
+    instances:
+      pubsub-publish:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-calls-in-half-open-state: 2
+        register-health-indicator: true
 
 logging:
   level:

@@ -1,6 +1,7 @@
 package com.cde.plm.entity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.UpdateTimestamp;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -28,6 +29,11 @@ public class BomComponent {
     private String unit;
     @Column(name = "notes")
     private String notes;
+    @Column(name = "created_by")
+    private UUID createdBy;
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
 }

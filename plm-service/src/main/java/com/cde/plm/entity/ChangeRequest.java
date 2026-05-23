@@ -31,6 +31,12 @@ public class ChangeRequest {
     private CrStatus status = CrStatus.DRAFT;
     @Column(name = "raised_by", nullable = false)
     private UUID raisedBy;
+    /** Set when the CR is submitted for review. */
+    @Column(name = "submitted_at")
+    private OffsetDateTime submittedAt;
+    /** Set when the CR is approved or rejected. */
+    @Column(name = "decided_at")
+    private OffsetDateTime decidedAt;
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
     @UpdateTimestamp

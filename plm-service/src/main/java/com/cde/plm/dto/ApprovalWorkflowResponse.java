@@ -15,6 +15,7 @@ public class ApprovalWorkflowResponse {
     private UUID approverUserId;
     private String status;
     private String comments;
+    private UUID delegatedTo;
     private OffsetDateTime decidedAt;
     private OffsetDateTime createdAt;
 }

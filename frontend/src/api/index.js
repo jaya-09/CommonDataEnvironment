@@ -35,6 +35,10 @@ export const plmApi = {
   getPhases: () => api.get('/plm/phases').then(r => r.data),
   getAuditLog: (type, id) => api.get(`/plm/versions/${id}/audit`).then(r => r.data),
   getPlmUsers: () => api.get('/plm/users').then(r => r.data),
+  getDocuments: versionId => api.get(`/plm/documents/${versionId}`).then(r => r.data),
+  uploadDocument: formData => api.post('/plm/documents/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data),
 };
 
 // ── QLM ──────────────────────────────────────────────────────

@@ -8,4 +8,5 @@ import java.util.UUID;
 @Repository
 public interface TechnicalDataPackageRepository extends JpaRepository<TechnicalDataPackage, UUID> {
     List<TechnicalDataPackage> findByVersion(ProductVersion version);
+    List<TechnicalDataPackage> findByVersion_VersionId(UUID versionId);
 }

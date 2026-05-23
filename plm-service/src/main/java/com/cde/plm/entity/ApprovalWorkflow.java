@@ -18,6 +18,9 @@ public class ApprovalWorkflow {
     private Integer stepOrder;
     @Column(name = "approver_user_id", nullable = false)
     private UUID approverUserId;
+    /** Populated when status = DELEGATED: the user this step was handed off to. */
+    @Column(name = "delegated_to")
+    private UUID delegatedTo;
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private WorkflowStatus status = WorkflowStatus.PENDING;
