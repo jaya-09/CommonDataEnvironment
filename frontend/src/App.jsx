@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import Layout from './components/common/Layout';
 import Dashboard from './pages/Dashboard';
-import { ProductsPage, ChangeRequestsPage, PhasesPage } from './pages/PlmPages';
+import { ProductsPage, ChangeRequestsPage, PhasesPage, BomPage } from './pages/PlmPages';
 import { NcrPage, CapaPage, RiskPage, AuditPage, DocumentsPage } from './pages/QlmPages';
 import { UsersPage, PhaseReadinessPage, EnrollmentsPage } from './pages/LlmPages';
 import AnalyticsPage from './pages/AnalyticsPage';
@@ -29,6 +29,7 @@ export default function App() {
             <Route path="/plm/versions" element={<ProductsPage />} />
             <Route path="/plm/change-requests" element={<ChangeRequestsPage />} />
             <Route path="/plm/phases" element={<PhasesPage />} />
+            <Route path="/plm/bom" element={<BomPage />} />
             {/* QLM */}
             <Route path="/qlm" element={<Navigate to="/qlm/ncr" replace />} />
             <Route path="/qlm/ncr" element={<NcrPage />} />

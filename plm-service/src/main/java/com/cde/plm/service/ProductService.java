@@ -46,6 +46,7 @@ public class ProductService {
                 .description(req.getDescription())
                 .status(Product.ProductStatus.ACTIVE)
                 .createdBy(userId)
+                .approverUserId(req.getApproverUserId())
                 .build());
 
         audit(AuditEntityType.PRODUCT, product.getProductId(), AuditAction.CREATED, null, product, userId, AuditEventSource.USER, null);
@@ -316,6 +317,19 @@ public class ProductService {
                 .orElseThrow(() -> new NoSuchElementException("CR not found: " + crId));
         cr.setStatus(ChangeRequest.CrStatus.SUBMITTED);
         crRepo.save(cr);
+
+        // Create approval workflow entry for the product's designated approver
+        UUID approverUserId = cr.getVersion().getProduct().getApproverUserId();
+        if (approverUserId != null) {
+            workflowRepo.save(ApprovalWorkflow.builder()
+                    .entityType(ApprovalWorkflow.EntityType.CHANGE_REQUEST)
+                    .entityId(crId)
+                    .stepOrder(1)
+                    .approverUserId(approverUserId)
+                    .status(ApprovalWorkflow.WorkflowStatus.PENDING)
+                    .build());
+        }
+
         audit(AuditEntityType.CHANGE_REQUEST, crId, AuditAction.SUBMITTED, null, null, userId, AuditEventSource.USER, correlationId);
         return toCrResponse(cr);
     }
@@ -324,6 +338,23 @@ public class ProductService {
     public ChangeRequestResponse approveChangeRequest(UUID crId, UUID approverId, String decision, String comments, String correlationId) {
         ChangeRequest cr = crRepo.findById(crId)
                 .orElseThrow(() -> new NoSuchElementException("CR not found: " + crId));
+
+        // Validate that the caller is the designated approver
+        List<ApprovalWorkflow> workflows = workflowRepo
+                .findByEntityTypeAndEntityIdOrderByStepOrderAsc(ApprovalWorkflow.EntityType.CHANGE_REQUEST, crId);
+        if (!workflows.isEmpty()) {
+            ApprovalWorkflow step = workflows.get(0);
+            if (!step.getApproverUserId().equals(approverId)) {
+                throw new IllegalStateException("You are not the designated approver for this change request.");
+            }
+            // Mark the workflow step as decided
+            step.setStatus("APPROVED".equals(decision)
+                    ? ApprovalWorkflow.WorkflowStatus.APPROVED
+                    : ApprovalWorkflow.WorkflowStatus.REJECTED);
+            step.setComments(comments);
+            step.setDecidedAt(OffsetDateTime.now());
+            workflowRepo.save(step);
+        }
 
         ChangeRequest.CrStatus newStatus = "APPROVED".equals(decision)
                 ? ChangeRequest.CrStatus.APPROVED : ChangeRequest.CrStatus.REJECTED;
@@ -512,10 +543,17 @@ public class ProductService {
     }
 
     private ProductResponse toProductResponse(Product p, boolean includeVersions) {
+        String approverName = null;
+        if (p.getApproverUserId() != null) {
+            approverName = userShadowRepo.findById(p.getApproverUserId())
+                    .map(u -> u.getFullName()).orElse(null);
+        }
         return ProductResponse.builder()
                 .productId(p.getProductId()).productCode(p.getProductCode())
                 .name(p.getName()).description(p.getDescription())
                 .status(p.getStatus().name())
+                .approverUserId(p.getApproverUserId())
+                .approverName(approverName)
                 .createdAt(p.getCreatedAt()).updatedAt(p.getUpdatedAt()).build();
     }
 

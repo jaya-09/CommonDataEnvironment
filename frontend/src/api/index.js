@@ -34,6 +34,7 @@ export const plmApi = {
   addBomComponent: (versionId, data) => api.post(`/plm/versions/${versionId}/bom`, data).then(r => r.data),
   getPhases: () => api.get('/plm/phases').then(r => r.data),
   getAuditLog: (type, id) => api.get(`/plm/versions/${id}/audit`).then(r => r.data),
+  getPlmUsers: () => api.get('/plm/users').then(r => r.data),
 };
 
 // ── QLM ──────────────────────────────────────────────────────
