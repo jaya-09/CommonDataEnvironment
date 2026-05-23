@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -34,8 +35,12 @@ public class EnrollmentService {
     /**
      * Enroll a user in a course.
      * Can be called manually (from API) or automatically (from Pub/Sub event).
+     *
+     * REQUIRES_NEW so that when called from EventHandlerService (which is @Transactional),
+     * each enrollment runs in its own independent transaction. A failure on one user
+     * won't roll back successful enrollments already committed for other users.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public EnrollmentResponse enroll(EnrollmentRequest request, String correlationId) {
         UserProfile user = userProfileRepository.findById(request.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + request.getUserId()));
@@ -52,10 +57,17 @@ public class EnrollmentService {
         if (alreadyActive) {
             log.info("User {} already has active enrollment for course {}. Skipping.",
                     user.getUserId(), course.getCourseId());
-            return enrollmentRepository.findByUserAndCourseAndStatus(
-                            user, course, TrainingEnrollment.EnrollmentStatus.ENROLLED)
+            // Must check both ENROLLED and IN_PROGRESS — existsByUserAndCourseAndStatusIn
+            // matches either status, so findByUserAndCourseAndStatus(ENROLLED) would throw
+            // a NoSuchElementException when the enrollment is actually IN_PROGRESS.
+            return enrollmentRepository.findFirstByUserAndCourseAndStatusIn(
+                            user, course,
+                            List.of(TrainingEnrollment.EnrollmentStatus.ENROLLED,
+                                    TrainingEnrollment.EnrollmentStatus.IN_PROGRESS))
                     .map(this::mapToEnrollmentResponse)
-                    .orElseThrow();
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Active enrollment not found for user " + user.getUserId()
+                            + " and course " + course.getCourseId()));
         }
 
         TrainingEnrollment enrollment = TrainingEnrollment.builder()
