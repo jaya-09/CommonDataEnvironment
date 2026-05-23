@@ -2,6 +2,7 @@ package com.cde.plm.audit;
 
 public enum AuditAction {
     CREATED,
+    UPDATED,
     SUBMITTED,
     APPROVED,
     REJECTED,

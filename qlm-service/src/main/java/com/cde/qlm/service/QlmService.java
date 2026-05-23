@@ -31,7 +31,8 @@ public class QlmService {
 
     @Transactional
     public NcrResponse createNcr(CreateNcrRequest req, UUID userId, String correlationId) {
-        String ncrNumber = "NCR-" + System.currentTimeMillis();
+        // Append short UUID fragment to prevent collision when two creates arrive in the same millisecond
+        String ncrNumber = "NCR-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         NonConformance.Severity severity = req.getSeverity() != null
                 ? NonConformance.Severity.valueOf(req.getSeverity())
                 : NonConformance.Severity.MAJOR;
@@ -50,14 +51,19 @@ public class QlmService {
         publisher.publishNcrRaised(NcrRaisedEvent.builder()
                 .ncrId(ncr.getNcrId()).ncrNumber(ncrNumber)
                 .productVersionId(req.getProductVersionId())
+                .productCode(req.getProductCode())
+                .title(req.getTitle())
                 .severity(ncr.getSeverity().name())
-                .description(req.getDescription()).reportedBy(userId).build(), correlationId);
+                .description(req.getDescription())
+                .reportedBy(userId)
+                .raisedAt(ncr.getDetectedAt())
+                .build(), correlationId);
 
         // ── Auto-create CAPA stub for MAJOR and CRITICAL NCRs ──────────────
         // The responsible team (product owners in PLM) will receive the CapaRaisedEvent
         // and fill in their corrective + preventive action plan before submitting for review.
         if (severity == NonConformance.Severity.MAJOR || severity == NonConformance.Severity.CRITICAL) {
-            String capaNumber = "CAPA-" + System.currentTimeMillis();
+            String capaNumber = "CAPA-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
             Capa capa = capaRepo.save(Capa.builder()
                     .capaNumber(capaNumber)
                     .ncr(ncr)
@@ -165,7 +171,7 @@ public class QlmService {
     @Transactional
     public CapaResponse createCapa(CreateCapaRequest req, UUID userId, String correlationId) {
         NonConformance ncr = req.getNcrId() != null ? findNcr(req.getNcrId()) : null;
-        String capaNumber = "CAPA-" + System.currentTimeMillis();
+        String capaNumber = "CAPA-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         Capa capa = capaRepo.save(Capa.builder()
                 .capaNumber(capaNumber).ncr(ncr)
@@ -290,7 +296,7 @@ public class QlmService {
 
     @Transactional
     public QualityAuditResponse createAudit(CreateAuditRequest req, UUID userId, String correlationId) {
-        String auditNumber = "QA-" + System.currentTimeMillis();
+        String auditNumber = "QA-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         QualityAudit audit = auditRepo.save(QualityAudit.builder()
                 .auditNumber(auditNumber).auditType(req.getAuditType())
                 .scope(req.getScope()).scheduledDate(req.getScheduledDate())
@@ -332,7 +338,7 @@ public class QlmService {
 
     @Transactional
     public RiskResponse createRisk(CreateRiskRequest req, UUID userId, String correlationId) {
-        String riskNumber = "RISK-" + System.currentTimeMillis();
+        String riskNumber = "RISK-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         RiskRegister risk = riskRepo.save(RiskRegister.builder()
                 .riskNumber(riskNumber).productVersionId(req.getProductVersionId())
                 .title(req.getTitle()).description(req.getDescription())
