@@ -219,8 +219,10 @@ public class ProductService {
                     .versionNumber(version.getVersionNumber())
                     .productId(version.getProduct().getProductId())
                     .productCode(version.getProduct().getProductCode())
+                    .productName(version.getProduct().getName())
                     .fromPhase(fromPhase)
                     .toPhase(targetPhase.getPhaseName())
+                    .toPhaseSequence(targetPhase.getSequenceOrder())
                     .triggeredBy(check.getRequestedBy())
                     .build();
             eventPublisher.publishPhaseTransitioned(phaseEvent, check.getCorrelationId());
@@ -301,7 +303,8 @@ public class ProductService {
     @Transactional
     public ChangeRequestResponse createChangeRequest(UUID versionId, CreateChangeRequestRequest req, UUID userId) {
         ProductVersion version = findVersion(versionId);
-        String crNumber = "CR-" + version.getProduct().getProductCode() + "-" + System.currentTimeMillis();
+        String crNumber = "CR-" + version.getProduct().getProductCode() + "-" + System.currentTimeMillis()
+                + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         ChangeRequest cr = crRepo.save(ChangeRequest.builder()
                 .crNumber(crNumber).version(version)
@@ -448,6 +451,41 @@ public class ProductService {
         }
     }
 
+    /**
+     * QLM closed an NCR (all linked CAPAs resolved).
+     * If the product version was put on HOLD because of that NCR, lift it back to IN_PROGRESS
+     * so the product team can continue working.
+     *
+     * BUG FIX: Without this handler the version remained on HOLD forever —
+     * PLmEventController previously ignored cde.qlm.ncr.closed entirely.
+     */
+    @Transactional
+    public void handleNcrClosed(NcrClosedEvent event, String correlationId) {
+        if (!idempotencyCheck(correlationId + "-NCRCLOSED-" + event.getNcrId(), "cde.qlm.ncr.closed")) return;
+
+        if (event.getProductVersionId() != null) {
+            versionRepo.findById(event.getProductVersionId()).ifPresent(v -> {
+                if (v.getStatus() == ProductVersion.VersionStatus.HOLD) {
+                    String oldStatus = v.getStatus().name();
+                    v.setStatus(ProductVersion.VersionStatus.IN_PROGRESS);
+                    versionRepo.save(v);
+                    log.info("Version {} lifted off HOLD — NCR {} closed", v.getVersionId(), event.getNcrId());
+                    eventPublisher.publishVersionStatusChanged(VersionStatusChangedEvent.builder()
+                            .versionId(v.getVersionId())
+                            .productCode(v.getProduct().getProductCode())
+                            .versionNumber(v.getVersionNumber())
+                            .oldStatus(oldStatus)
+                            .newStatus(ProductVersion.VersionStatus.IN_PROGRESS.name())
+                            .build(), correlationId);
+                    audit(AuditEntityType.VERSION, v.getVersionId(), AuditAction.UPDATED,
+                            Map.of("oldStatus", oldStatus),
+                            Map.of("newStatus", "IN_PROGRESS", "reason", "NCR " + event.getNcrNumber() + " closed"),
+                            null, AuditEventSource.PUBSUB, correlationId);
+                }
+            });
+        }
+    }
+
     @Transactional
     public void handleNcrRaised(NcrRaisedEvent event, String correlationId) {
         if (!idempotencyCheck(correlationId + "-NCR-" + event.getNcrId(), "cde.qlm.ncr.raised")) return;
@@ -492,7 +530,10 @@ public class ProductService {
         String eventKey = "PGCR-" + event.getGateCorrelationId() + "-" + event.getCheckerService();
         if (!idempotencyCheck(eventKey, "cde.plm.phase.gate.check.result")) return;
 
-        PhaseGatePendingCheck check = pendingCheckRepo.findById(event.getGateCorrelationId())
+        // Use PESSIMISTIC_WRITE lock: if QLM and LLM results arrive at the same time,
+        // only one transaction proceeds at a time — preventing the second writer from
+        // overwriting the first writer's flag before bothResultsReceived() is evaluated.
+        PhaseGatePendingCheck check = pendingCheckRepo.findByIdForUpdate(event.getGateCorrelationId())
                 .orElse(null);
 
         if (check == null) {
