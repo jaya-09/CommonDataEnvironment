@@ -32,7 +32,7 @@ export function Badge({ status, className = '' }) {
 // ── CARD ─────────────────────────────────────────────────────
 export function Card({ children, className = '' }) {
   return (
-    <div className={`bg-white rounded-xl border border-gray-100 ${className}`}>
+    <div className={`bg-white rounded-2xl border border-gray-100 ${className}`}>
       {children}
     </div>
   );
@@ -124,7 +124,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" onClick={onClose} />
-      <div className={`relative bg-white rounded-2xl border border-gray-100 shadow-xl w-full ${widths[size]} max-h-[90vh] overflow-y-auto`}>
+      <div className={`relative bg-white rounded-3xl border border-gray-100 shadow-2xl shadow-gray-200/60 w-full ${widths[size]} max-h-[90vh] overflow-y-auto`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-900 tracking-tight">{title}</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">

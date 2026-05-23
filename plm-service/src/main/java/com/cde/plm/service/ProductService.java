@@ -66,6 +66,7 @@ public class ProductService {
                 ProductVersionSummary.builder()
                         .versionId(v.getVersionId())
                         .versionNumber(v.getVersionNumber())
+                        .description(v.getDescription())
                         .status(v.getStatus().name())
                         .currentPhase(v.getCurrentPhase() != null ? v.getCurrentPhase().getDisplayName() : null)
                         .build()).toList();
@@ -86,6 +87,7 @@ public class ProductService {
         ProductVersion version = versionRepo.save(ProductVersion.builder()
                 .product(product)
                 .versionNumber(req.getVersionNumber())
+                .description(req.getDescription())
                 .status(ProductVersion.VersionStatus.DRAFT)
                 .currentPhase(firstPhase)
                 .createdBy(userId)
@@ -205,6 +207,7 @@ public class ProductService {
             if (targetPhase.getPhaseName().equals("Deployment") || targetPhase.getPhaseName().equals("Maintenance")) {
                 version.setStatus(ProductVersion.VersionStatus.RELEASED);
                 version.setReleasedAt(OffsetDateTime.now());
+                version.setReleasedBy(check.getRequestedBy());
             } else {
                 version.setStatus(ProductVersion.VersionStatus.IN_PROGRESS);
             }
@@ -302,7 +305,7 @@ public class ProductService {
 
         ChangeRequest cr = crRepo.save(ChangeRequest.builder()
                 .crNumber(crNumber).version(version)
-                .crType(req.crType != null ? ChangeRequest.CrType.valueOf(req.crType) : ChangeRequest.CrType.STANDARD)
+                .crType(req.crType != null ? req.crType : ChangeRequest.CrType.STANDARD)
                 .title(req.title).description(req.description)
                 .reason(req.reason).impactAnalysis(req.impactAnalysis)
                 .status(ChangeRequest.CrStatus.DRAFT).raisedBy(userId).build());
@@ -316,6 +319,7 @@ public class ProductService {
         ChangeRequest cr = crRepo.findById(crId)
                 .orElseThrow(() -> new NoSuchElementException("CR not found: " + crId));
         cr.setStatus(ChangeRequest.CrStatus.SUBMITTED);
+        cr.setSubmittedAt(OffsetDateTime.now());
         crRepo.save(cr);
 
         // Create approval workflow entry for the product's designated approver
@@ -335,7 +339,7 @@ public class ProductService {
     }
 
     @Transactional
-    public ChangeRequestResponse approveChangeRequest(UUID crId, UUID approverId, String decision, String comments, String correlationId) {
+    public ChangeRequestResponse approveChangeRequest(UUID crId, UUID approverId, ChangeRequest.CrStatus decision, String comments, String correlationId) {
         ChangeRequest cr = crRepo.findById(crId)
                 .orElseThrow(() -> new NoSuchElementException("CR not found: " + crId));
 
@@ -348,7 +352,7 @@ public class ProductService {
                 throw new IllegalStateException("You are not the designated approver for this change request.");
             }
             // Mark the workflow step as decided
-            step.setStatus("APPROVED".equals(decision)
+            step.setStatus(decision == ChangeRequest.CrStatus.APPROVED
                     ? ApprovalWorkflow.WorkflowStatus.APPROVED
                     : ApprovalWorkflow.WorkflowStatus.REJECTED);
             step.setComments(comments);
@@ -356,9 +360,9 @@ public class ProductService {
             workflowRepo.save(step);
         }
 
-        ChangeRequest.CrStatus newStatus = "APPROVED".equals(decision)
-                ? ChangeRequest.CrStatus.APPROVED : ChangeRequest.CrStatus.REJECTED;
+        ChangeRequest.CrStatus newStatus = decision;
         cr.setStatus(newStatus);
+        cr.setDecidedAt(OffsetDateTime.now());
         crRepo.save(cr);
 
         if (newStatus == ChangeRequest.CrStatus.APPROVED) {
@@ -381,6 +385,7 @@ public class ProductService {
     // ── BOM ───────────────────────────────────────────────────
 
     @Transactional
+    @CacheEvict(value = "bom-tree", key = "#versionId")
     public BomComponentResponse addBomComponent(UUID versionId, CreateBomComponentRequest req, UUID userId) {
         ProductVersion version = findVersion(versionId);
         BomComponent parent = req.getParentComponentId() != null
@@ -391,7 +396,8 @@ public class ProductService {
                 .componentCode(req.getComponentCode()).name(req.getName())
                 .componentType(req.getComponentType())
                 .quantity(req.getQuantity() != null ? new java.math.BigDecimal(req.getQuantity()) : java.math.BigDecimal.ONE)
-                .unit(req.getUnit()).notes(req.getNotes()).build());
+                .unit(req.getUnit()).notes(req.getNotes())
+                .createdBy(userId).build());
 
         return toBomResponse(comp, false);
     }
@@ -413,16 +419,40 @@ public class ProductService {
                 .map(p -> LifecyclePhaseResponse.builder()
                         .phaseId(p.getPhaseId()).phaseName(p.getPhaseName())
                         .displayName(p.getDisplayName()).sequenceOrder(p.getSequenceOrder())
-                        .active(p.isActive()).build()).toList();
+                        .build()).toList();
     }
 
     // ── EVENT HANDLING ────────────────────────────────────────
+
+    /**
+     * QLM auto-created a CAPA stub for a MAJOR/CRITICAL NCR on this product version.
+     * PLM logs this against the version so the product team knows a CAPA is waiting
+     * for their corrective/preventive action plan.
+     */
+    @Transactional
+    public void handleCapaRaised(CapaRaisedEvent event, String correlationId) {
+        if (!idempotencyCheck(correlationId + "-CAPA-" + event.getCapaId(), "cde.qlm.capa.raised")) return;
+
+        if (event.getProductVersionId() != null) {
+            versionRepo.findById(event.getProductVersionId()).ifPresent(v -> {
+                log.info("CAPA {} auto-raised for version {} (NCR {}). Product team must submit a corrective plan.",
+                        event.getCapaNumber(), v.getVersionId(), event.getNcrId());
+                audit(AuditEntityType.VERSION, v.getVersionId(), AuditAction.UPDATED,
+                        null, Map.of(
+                                "event",      "capa.raised",
+                                "capaId",     event.getCapaId().toString(),
+                                "capaNumber", event.getCapaNumber(),
+                                "ncrId",      event.getNcrId() != null ? event.getNcrId().toString() : "N/A"
+                        ), null, AuditEventSource.PUBSUB, correlationId);
+            });
+        }
+    }
 
     @Transactional
     public void handleNcrRaised(NcrRaisedEvent event, String correlationId) {
         if (!idempotencyCheck(correlationId + "-NCR-" + event.getNcrId(), "cde.qlm.ncr.raised")) return;
 
-        if ("CRITICAL".equals(event.getSeverity()) && event.getProductVersionId() != null) {
+        if (NcrRaisedEvent.SEVERITY_CRITICAL.equals(event.getSeverity()) && event.getProductVersionId() != null) {
             versionRepo.findById(event.getProductVersionId()).ifPresent(v -> {
                 String oldStatus = v.getStatus().name();
                 v.setStatus(ProductVersion.VersionStatus.HOLD);
@@ -564,10 +594,12 @@ public class ProductService {
                 .productCode(v.getProduct().getProductCode())
                 .productName(v.getProduct().getName())
                 .versionNumber(v.getVersionNumber())
+                .description(v.getDescription())
                 .status(v.getStatus().name())
                 .currentPhase(v.getCurrentPhase() != null ? v.getCurrentPhase().getDisplayName() : null)
                 .phaseSequence(v.getCurrentPhase() != null ? v.getCurrentPhase().getSequenceOrder() : null)
                 .releasedAt(v.getReleasedAt())
+                .releasedBy(v.getReleasedBy())
                 .createdAt(v.getCreatedAt()).updatedAt(v.getUpdatedAt()).build();
     }
 
@@ -578,6 +610,8 @@ public class ProductService {
                 .crType(cr.getCrType().name()).title(cr.getTitle())
                 .description(cr.getDescription()).reason(cr.getReason())
                 .impactAnalysis(cr.getImpactAnalysis()).status(cr.getStatus().name())
+                .raisedBy(cr.getRaisedBy())
+                .submittedAt(cr.getSubmittedAt()).decidedAt(cr.getDecidedAt())
                 .createdAt(cr.getCreatedAt()).updatedAt(cr.getUpdatedAt()).build();
     }
 
@@ -588,7 +622,8 @@ public class ProductService {
                 .componentCode(c.getComponentCode()).name(c.getName())
                 .componentType(c.getComponentType())
                 .quantity(c.getQuantity() != null ? c.getQuantity().doubleValue() : 1.0)
-                .unit(c.getUnit()).notes(c.getNotes()).build();
+                .unit(c.getUnit()).notes(c.getNotes())
+                .createdBy(c.getCreatedBy()).createdAt(c.getCreatedAt()).build();
     }
 
     private BomComponentResponse toBomWithChildren(BomComponent root, List<BomComponent> all) {

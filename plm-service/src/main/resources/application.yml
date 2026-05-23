@@ -41,13 +41,52 @@ app:
     pubsub:
       emulator-host: localhost:8085
   topics:
-    version-released: cde.plm.version.released
-    phase-transitioned: cde.plm.phase.transitioned
-    change-request-approved: cde.plm.change.request.approved
-    phase-gate-check-requested: cde.plm.phase.gate.check.requested
-    version-status-changed: cde.plm.version.status.changed
+    # Domain topic — all PLM events are published here.
+    # Consumers subscribe to this topic and route internally by eventType.
+    plm-events: cde.plm.events
   services:
     llm-url: ${LLM_SERVICE_URL:http://localhost:8083}
+  storage:
+    provider: minio   # switch to 'gcp' when deploying to GCP
+    bucket: cde-tdp-documents
+    minio:
+      endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+      access-key: ${MINIO_ACCESS_KEY:minioadmin}
+      secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    # ── GCP Cloud Storage (fill in when ready to deploy) ──────────────────
+    # provider: gcp
+    # gcp:
+    #   bucket-name: YOUR_GCS_BUCKET_NAME
+    #   project-id:  YOUR_GCP_PROJECT_ID
+    #   # Credentials are picked up automatically from GOOGLE_APPLICATION_CREDENTIALS env var
+    # ─────────────────────────────────────────────────────────────────────
+
+resilience4j:
+  retry:
+    instances:
+      pubsub-publish:
+        max-attempts: 3                      # 1 original + 2 retries
+        wait-duration: 500ms                 # 500ms → 1000ms (exponential)
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - java.lang.RuntimeException
+          - java.io.IOException
+
+  circuitbreaker:
+    instances:
+      pubsub-publish:
+        # Look at the last 10 publish calls to decide health
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        # If 50% of those 10 calls fail → flip circuit OPEN
+        failure-rate-threshold: 50
+        # Stay OPEN (stop trying) for 30 seconds
+        wait-duration-in-open-state: 30s
+        # Then allow 2 test calls through (HALF-OPEN) to check recovery
+        permitted-calls-in-half-open-state: 2
+        # Expose circuit state in /actuator/health
+        register-health-indicator: true
 
 logging:
   level:
@@ -75,3 +114,6 @@ app:
   gcp:
     pubsub:
       emulator-host: pubsub-emulator:8085
+  storage:
+    minio:
+      endpoint: http://minio:9000

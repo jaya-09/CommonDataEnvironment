@@ -7,6 +7,7 @@ import java.util.UUID;
 public class ProductVersionSummary {
     private UUID versionId;
     private String versionNumber;
+    private String description;
     private String status;
     private String currentPhase;
 }

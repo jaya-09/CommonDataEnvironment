@@ -13,6 +13,8 @@ import java.util.UUID;
 @Repository
 public interface UserProfileRepository extends JpaRepository<UserProfile, UUID> {
 
+    List<UserProfile> findByActiveTrue();
+
     Optional<UserProfile> findByEmail(String email);
 
     Optional<UserProfile> findByEmployeeId(String employeeId);

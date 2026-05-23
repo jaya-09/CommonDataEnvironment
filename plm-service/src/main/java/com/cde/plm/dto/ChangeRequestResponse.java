@@ -17,6 +17,9 @@ public class ChangeRequestResponse {
     private String reason;
     private String impactAnalysis;
     private String status;
+    private UUID raisedBy;
+    private OffsetDateTime submittedAt;
+    private OffsetDateTime decidedAt;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

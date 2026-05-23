@@ -73,14 +73,34 @@ app:
     pubsub:
       emulator-host: localhost:8085   # empty in prod (uses ADC)
   topics:
-    certification-granted: cde.llm.certification.granted
-    user-profile-updated: cde.llm.user.profile.updated
-    phase-gate-check-result: cde.plm.phase.gate.check.result
-    enrollment-triggered: cde.llm.enrollment.triggered
+    # Domain topic — all LLM events go here (including phase gate results back to PLM).
+    # Consumers subscribe to this topic and route internally by eventType.
+    llm-events: cde.llm.events
   cache:
     skill-list-ttl: 21600       # 6 hours
     user-profile-ttl: 3600      # 1 hour
     cert-status-ttl: 900        # 15 min
+
+resilience4j:
+  retry:
+    instances:
+      pubsub-publish:
+        max-attempts: 3
+        wait-duration: 500ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - java.lang.RuntimeException
+          - java.io.IOException
+  circuitbreaker:
+    instances:
+      pubsub-publish:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-calls-in-half-open-state: 2
+        register-health-indicator: true
 
 logging:
   level:

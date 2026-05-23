@@ -9,6 +9,11 @@ import java.util.UUID;
 
 @Data @Builder @NoArgsConstructor @AllArgsConstructor
 public class NcrRaisedEvent {
+
+    public static final String SEVERITY_CRITICAL = "CRITICAL";
+    public static final String SEVERITY_MAJOR    = "MAJOR";
+    public static final String SEVERITY_MINOR    = "MINOR";
+
     private UUID ncrId;
     private String ncrNumber;
     private UUID productVersionId;

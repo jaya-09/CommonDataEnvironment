@@ -32,13 +32,15 @@ public class QlmService {
     @Transactional
     public NcrResponse createNcr(CreateNcrRequest req, UUID userId, String correlationId) {
         String ncrNumber = "NCR-" + System.currentTimeMillis();
+        NonConformance.Severity severity = req.getSeverity() != null
+                ? NonConformance.Severity.valueOf(req.getSeverity())
+                : NonConformance.Severity.MAJOR;
+
         NonConformance ncr = ncrRepo.save(NonConformance.builder()
                 .ncrNumber(ncrNumber)
                 .productVersionId(req.getProductVersionId())
                 .productCode(req.getProductCode())
-                .severity(req.getSeverity() != null
-                        ? NonConformance.Severity.valueOf(req.getSeverity())
-                        : NonConformance.Severity.MAJOR)
+                .severity(severity)
                 .title(req.getTitle()).description(req.getDescription())
                 .status(NonConformance.NcrStatus.OPEN)
                 .reportedBy(userId).build());
@@ -50,6 +52,33 @@ public class QlmService {
                 .productVersionId(req.getProductVersionId())
                 .severity(ncr.getSeverity().name())
                 .description(req.getDescription()).reportedBy(userId).build(), correlationId);
+
+        // ── Auto-create CAPA stub for MAJOR and CRITICAL NCRs ──────────────
+        // The responsible team (product owners in PLM) will receive the CapaRaisedEvent
+        // and fill in their corrective + preventive action plan before submitting for review.
+        if (severity == NonConformance.Severity.MAJOR || severity == NonConformance.Severity.CRITICAL) {
+            String capaNumber = "CAPA-" + System.currentTimeMillis();
+            Capa capa = capaRepo.save(Capa.builder()
+                    .capaNumber(capaNumber)
+                    .ncr(ncr)
+                    .title("CAPA for NCR: " + ncr.getTitle())
+                    .ownerUserId(userId)   // initially assigned to reporter; reassigned by PLM team
+                    .status(Capa.CapaStatus.OPEN)
+                    .build());
+
+            ncr.setStatus(NonConformance.NcrStatus.PENDING_CAPA);
+            ncrRepo.save(ncr);
+
+            publisher.publishCapaRaised(CapaRaisedEvent.builder()
+                    .capaId(capa.getCapaId()).capaNumber(capa.getCapaNumber())
+                    .ncrId(ncr.getNcrId())
+                    .productVersionId(ncr.getProductVersionId())
+                    .build(), correlationId);
+
+            audit(AuditEntityType.CAPA, capa.getCapaId(), AuditAction.CREATED, userId, correlationId);
+            log.info("Auto-created CAPA stub [capaId={}, ncrId={}, severity={}]",
+                    capa.getCapaId(), ncr.getNcrId(), severity);
+        }
 
         return toNcrResponse(ncr);
     }
@@ -67,18 +96,46 @@ public class QlmService {
         return toNcrResponse(findNcr(ncrId));
     }
 
+    /**
+     * Update an NCR's status, root cause, or assignee.
+     *
+     * Guard: an NCR cannot be set to CLOSED if it has a linked CAPA that is not yet
+     * CLOSED or CANCELLED. The responsible team must close their CAPA first.
+     */
     @Transactional
     public NcrResponse updateNcr(UUID ncrId, UpdateNcrRequest req, UUID userId, String correlationId) {
         NonConformance ncr = findNcr(ncrId);
-        if (req.getRootCause() != null) ncr.setRootCause(req.getRootCause());
+
         if (req.getStatus() != null) {
-            ncr.setStatus(NonConformance.NcrStatus.valueOf(req.getStatus()));
-            if (ncr.getStatus() == NonConformance.NcrStatus.CLOSED)
+            NonConformance.NcrStatus newStatus = NonConformance.NcrStatus.valueOf(req.getStatus());
+
+            // ── CLOSE GUARD ──────────────────────────────────────────────────────
+            if (newStatus == NonConformance.NcrStatus.CLOSED) {
+                List<Capa> linkedCapas = capaRepo.findByNcr(ncr);
+                List<Capa> blockers = linkedCapas.stream()
+                        .filter(c -> c.getStatus() != Capa.CapaStatus.CLOSED
+                                  && c.getStatus() != Capa.CapaStatus.CANCELLED)
+                        .toList();
+                if (!blockers.isEmpty()) {
+                    String blocking = blockers.stream()
+                            .map(c -> c.getCapaNumber() + " [" + c.getStatus() + "]")
+                            .reduce((a, b) -> a + ", " + b).orElse("");
+                    throw new IllegalStateException(
+                            "Cannot close NCR: linked CAPA(s) must be CLOSED or CANCELLED first: " + blocking);
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────────
+
+            ncr.setStatus(newStatus);
+            if (newStatus == NonConformance.NcrStatus.CLOSED)
                 ncr.setClosedAt(OffsetDateTime.now());
         }
+
+        if (req.getRootCause() != null) ncr.setRootCause(req.getRootCause());
         if (req.getAssignedTo() != null) ncr.setAssignedTo(req.getAssignedTo());
         ncrRepo.save(ncr);
         audit(AuditEntityType.NCR, ncrId, AuditAction.UPDATED, userId, correlationId);
+
         if (ncr.getStatus() == NonConformance.NcrStatus.CLOSED) {
             publisher.publishNcrClosed(NcrClosedEvent.builder()
                     .ncrId(ncr.getNcrId()).ncrNumber(ncr.getNcrNumber())
@@ -101,6 +158,10 @@ public class QlmService {
 
     // ── CAPA ─────────────────────────────────────────────────
 
+    /**
+     * Manually create a CAPA (e.g. for MINOR NCRs where auto-creation doesn't trigger,
+     * or as a standalone preventive action not linked to any NCR).
+     */
     @Transactional
     public CapaResponse createCapa(CreateCapaRequest req, UUID userId, String correlationId) {
         NonConformance ncr = req.getNcrId() != null ? findNcr(req.getNcrId()) : null;
@@ -110,7 +171,7 @@ public class QlmService {
                 .capaNumber(capaNumber).ncr(ncr)
                 .title(req.getTitle()).correctiveAction(req.getCorrectiveAction())
                 .preventiveAction(req.getPreventiveAction())
-                .ownerUserId(req.getOwnerUserId())
+                .ownerUserId(req.getOwnerUserId() != null ? req.getOwnerUserId() : userId)
                 .status(Capa.CapaStatus.OPEN).dueDate(req.getDueDate()).build());
 
         if (ncr != null) {
@@ -126,10 +187,80 @@ public class QlmService {
         return toCapaResponse(capa);
     }
 
+    /**
+     * Responsible team submits their corrective + preventive action plan for quality review.
+     * OPEN → UNDER_REVIEW.
+     * Clears any previous rejection reason.
+     */
+    @Transactional
+    public CapaResponse submitCapa(UUID capaId, SubmitCapaRequest req, UUID userId, String correlationId) {
+        Capa capa = findCapa(capaId);
+        if (capa.getStatus() != Capa.CapaStatus.OPEN) {
+            throw new IllegalStateException(
+                    "Only an OPEN CAPA can be submitted for review. Current status: " + capa.getStatus());
+        }
+        capa.setCorrectiveAction(req.getCorrectiveAction());
+        capa.setPreventiveAction(req.getPreventiveAction());
+        capa.setDueDate(req.getDueDate());
+        capa.setRejectionReason(null);   // clear previous rejection if any
+        capa.setStatus(Capa.CapaStatus.UNDER_REVIEW);
+        capaRepo.save(capa);
+        audit(AuditEntityType.CAPA, capaId, AuditAction.UPDATED, userId, correlationId);
+        log.info("CAPA submitted for review [capaId={}, submittedBy={}]", capaId, userId);
+        return toCapaResponse(capa);
+    }
+
+    /**
+     * Quality team reviews the submitted CAPA plan.
+     *
+     * approved=true  → UNDER_REVIEW → APPROVED
+     *                  Responsible team can now execute the fix.
+     * approved=false → UNDER_REVIEW → OPEN  (with rejectionReason)
+     *                  Responsible team revises and resubmits.
+     */
+    @Transactional
+    public CapaResponse reviewCapa(UUID capaId, ReviewCapaRequest req, UUID userId, String correlationId) {
+        Capa capa = findCapa(capaId);
+        if (capa.getStatus() != Capa.CapaStatus.UNDER_REVIEW) {
+            throw new IllegalStateException(
+                    "Only a CAPA UNDER_REVIEW can be reviewed. Current status: " + capa.getStatus());
+        }
+        if (!req.getApproved() && (req.getRejectionReason() == null || req.getRejectionReason().isBlank())) {
+            throw new IllegalArgumentException("rejectionReason is required when rejecting a CAPA plan");
+        }
+
+        capa.setReviewedBy(userId);
+        capa.setReviewedAt(OffsetDateTime.now());
+
+        if (req.getApproved()) {
+            capa.setStatus(Capa.CapaStatus.APPROVED);
+            capa.setRejectionReason(null);
+            log.info("CAPA approved [capaId={}, approvedBy={}]", capaId, userId);
+        } else {
+            capa.setStatus(Capa.CapaStatus.OPEN);   // back to OPEN for revision
+            capa.setRejectionReason(req.getRejectionReason());
+            log.info("CAPA rejected [capaId={}, rejectedBy={}, reason={}]",
+                    capaId, userId, req.getRejectionReason());
+        }
+        capaRepo.save(capa);
+        audit(AuditEntityType.CAPA, capaId, AuditAction.UPDATED, userId, correlationId);
+        return toCapaResponse(capa);
+    }
+
+    /**
+     * Close a CAPA after executing the fix and verifying its effectiveness.
+     * Guard: CAPA must be in APPROVED state — it cannot be closed without quality approval.
+     */
     @Transactional
     public CapaResponse closeCapa(UUID capaId, String effectivenessCheck, UUID userId, String correlationId) {
-        Capa capa = capaRepo.findById(capaId)
-                .orElseThrow(() -> new NoSuchElementException("CAPA not found: " + capaId));
+        Capa capa = findCapa(capaId);
+
+        if (capa.getStatus() != Capa.CapaStatus.APPROVED) {
+            throw new IllegalStateException(
+                    "CAPA must be APPROVED by the quality team before it can be closed. Current status: "
+                    + capa.getStatus());
+        }
+
         capa.setStatus(Capa.CapaStatus.CLOSED);
         capa.setEffectivenessCheck(effectivenessCheck);
         capa.setEffectivenessVerified(true);
@@ -143,6 +274,7 @@ public class QlmService {
                 .productVersionId(versionId).build(), correlationId);
 
         audit(AuditEntityType.CAPA, capaId, AuditAction.CLOSED, userId, correlationId);
+        log.info("CAPA closed [capaId={}, closedBy={}]", capaId, userId);
         return toCapaResponse(capa);
     }
 
@@ -323,6 +455,10 @@ public class QlmService {
         return ncrRepo.findById(id).orElseThrow(() -> new NoSuchElementException("NCR not found: " + id));
     }
 
+    private Capa findCapa(UUID id) {
+        return capaRepo.findById(id).orElseThrow(() -> new NoSuchElementException("CAPA not found: " + id));
+    }
+
     private NcrResponse toNcrResponse(NonConformance n) {
         return NcrResponse.builder().ncrId(n.getNcrId()).ncrNumber(n.getNcrNumber())
                 .productVersionId(n.getProductVersionId()).productCode(n.getProductCode())
@@ -341,6 +477,8 @@ public class QlmService {
                 .status(c.getStatus().name()).dueDate(c.getDueDate())
                 .effectivenessCheck(c.getEffectivenessCheck())
                 .effectivenessVerified(c.getEffectivenessVerified())
+                .reviewedBy(c.getReviewedBy()).reviewedAt(c.getReviewedAt())
+                .rejectionReason(c.getRejectionReason())
                 .closedAt(c.getClosedAt()).createdAt(c.getCreatedAt()).updatedAt(c.getUpdatedAt()).build();
     }
 

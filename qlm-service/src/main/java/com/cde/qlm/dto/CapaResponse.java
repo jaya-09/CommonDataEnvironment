@@ -20,6 +20,9 @@ public class CapaResponse {
     private LocalDate dueDate;
     private String effectivenessCheck;
     private Boolean effectivenessVerified;
+    private UUID reviewedBy;
+    private OffsetDateTime reviewedAt;
+    private String rejectionReason;
     private OffsetDateTime closedAt;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

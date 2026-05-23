@@ -27,6 +27,8 @@ public class PlmEventController {
             switch (type) {
                 case "cde.qlm.ncr.raised" -> productService.handleNcrRaised(
                         objectMapper.convertValue(payload, NcrRaisedEvent.class), correlationId);
+                case "cde.qlm.capa.raised" -> productService.handleCapaRaised(
+                        objectMapper.convertValue(payload, CapaRaisedEvent.class), correlationId);
                 case "cde.llm.user.profile.updated" -> productService.handleUserProfileUpdated(
                         objectMapper.convertValue(payload, UserProfileUpdatedEvent.class), correlationId);
                 case "cde.plm.phase.gate.check.result" -> productService.handlePhaseGateCheckResult(

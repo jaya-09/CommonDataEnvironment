@@ -33,6 +33,14 @@ public class Capa {
     private String effectivenessCheck;
     @Column(name = "effectiveness_verified")
     private Boolean effectivenessVerified;
+    /** Set when quality team reviews the submitted CAPA plan. */
+    @Column(name = "reviewed_by")
+    private UUID reviewedBy;
+    @Column(name = "reviewed_at")
+    private OffsetDateTime reviewedAt;
+    /** Populated on rejection so the responsible team knows what to fix. */
+    @Column(name = "rejection_reason")
+    private String rejectionReason;
     @Column(name = "closed_at")
     private OffsetDateTime closedAt;
     @Column(name = "created_at", updatable = false)
@@ -40,5 +48,16 @@ public class Capa {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
-    public enum CapaStatus { OPEN, IN_PROGRESS, PENDING_VERIFICATION, CLOSED, CANCELLED }
+
+    /**
+     * OPEN         — stub created; responsible team must fill in corrective/preventive plan
+     * UNDER_REVIEW — plan submitted; waiting for quality team approval
+     * APPROVED     — quality team approved; team executes the fix
+     * OPEN         — (after rejection) quality team rejected; team revises and resubmits
+     * CLOSED       — fix executed, effectiveness verified; NCR may now be closed
+     * CANCELLED    — voided (e.g. NCR was a false positive)
+     */
+    public enum CapaStatus {
+        OPEN, UNDER_REVIEW, APPROVED, REJECTED, IN_PROGRESS, PENDING_VERIFICATION, CLOSED, CANCELLED
+    }
 }

@@ -15,6 +15,8 @@ public class ProductVersion {
     private Product product;
     @Column(name = "version_number", nullable = false, length = 30)
     private String versionNumber;
+    @Column(name = "description")
+    private String description;
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 30)
     private VersionStatus status = VersionStatus.DRAFT;
@@ -23,6 +25,8 @@ public class ProductVersion {
     private LifecyclePhase currentPhase;
     @Column(name = "released_at")
     private OffsetDateTime releasedAt;
+    @Column(name = "released_by")
+    private UUID releasedBy;
     @Column(name = "created_by", nullable = false)
     private UUID createdBy;
     @Column(name = "created_at", updatable = false)

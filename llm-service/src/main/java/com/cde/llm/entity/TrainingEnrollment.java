@@ -2,6 +2,7 @@ package com.cde.llm.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -55,8 +56,9 @@ public class TrainingEnrollment {
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
+    @UpdateTimestamp
     @Column(name = "updated_at")
-    private OffsetDateTime updatedAt = OffsetDateTime.now();
+    private OffsetDateTime updatedAt;
 
     public enum EnrollmentStatus {
         ENROLLED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED

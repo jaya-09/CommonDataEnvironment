@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Plus, GitBranch, ChevronRight, ArrowRight, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { Plus, GitBranch, ChevronRight, ArrowRight, CheckCircle, XCircle, Loader, Upload } from 'lucide-react';
 import { plmApi } from '../api';
+import { CR_STATUS, CR_TYPE, APPROVAL_DECISION } from '../constants/plm';
 import { Card, CardHeader, Table, Badge, Button, Modal, Input, Textarea, Select, StatCard, useToast, LoadingState, Alert } from '../components/common';
 
 // ── PRODUCTS PAGE ─────────────────────────────────────────────
@@ -234,7 +235,7 @@ export function ChangeRequestsPage() {
   const [versions, setVersions] = useState([]);
   const [selectedVersion, setSelectedVersion] = useState('');
   const [crs, setCrs] = useState([]);
-  const [form, setForm] = useState({ title: '', description: '', reason: '', impactAnalysis: '', crType: 'STANDARD' });
+  const [form, setForm] = useState({ title: '', description: '', reason: '', impactAnalysis: '', crType: CR_TYPE.STANDARD });
 
   const loadVersions = async (productId) => {
     setSelectedProduct(productId);
@@ -253,7 +254,7 @@ export function ChangeRequestsPage() {
   };
 
   const createMutation = useMutation(data => plmApi.createChangeRequest(selectedVersion, data), {
-    onSuccess: () => { loadCRs(selectedVersion); setShowCreate(false); setForm({ title: '', description: '', reason: '', impactAnalysis: '', crType: 'STANDARD' }); toast('CR created', 'success'); },
+    onSuccess: () => { loadCRs(selectedVersion); setShowCreate(false); setForm({ title: '', description: '', reason: '', impactAnalysis: '', crType: CR_TYPE.STANDARD }); toast('CR created', 'success'); },
     onError: e => toast(e.message, 'error'),
   });
 
@@ -276,13 +277,13 @@ export function ChangeRequestsPage() {
     {
       key: 'actions', label: '', render: r => (
         <div className="flex gap-1">
-          {r.status === 'DRAFT' && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); submitMutation.mutate(r.crId); }}>Submit</Button>}
-          {r.status === 'SUBMITTED' && (
+          {r.status === CR_STATUS.DRAFT && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); submitMutation.mutate(r.crId); }}>Submit</Button>}
+          {r.status === CR_STATUS.SUBMITTED && (
             <>
-              <Button size="sm" variant="success" onClick={e => { e.stopPropagation(); approveMutation.mutate({ crId: r.crId, decision: 'APPROVED' }); }}>
+              <Button size="sm" variant="success" onClick={e => { e.stopPropagation(); approveMutation.mutate({ crId: r.crId, decision: APPROVAL_DECISION.APPROVED }); }}>
                 <CheckCircle size={14} />Approve
               </Button>
-              <Button size="sm" variant="danger" onClick={e => { e.stopPropagation(); approveMutation.mutate({ crId: r.crId, decision: 'REJECTED' }); }}>
+              <Button size="sm" variant="danger" onClick={e => { e.stopPropagation(); approveMutation.mutate({ crId: r.crId, decision: APPROVAL_DECISION.REJECTED }); }}>
                 <XCircle size={14} />Reject
               </Button>
             </>
@@ -323,8 +324,8 @@ export function ChangeRequestsPage() {
         <div className="space-y-4">
           <Input label="Title *" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
           <Select label="Type" value={form.crType} onChange={e => setForm(f => ({ ...f, crType: e.target.value }))}>
-            <option value="STANDARD">Standard</option>
-            <option value="ENHANCED">Enhanced</option>
+            <option value={CR_TYPE.STANDARD}>Standard</option>
+            <option value={CR_TYPE.ENHANCED}>Enhanced</option>
           </Select>
           <Textarea label="Description" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           <Textarea label="Reason for Change" value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
@@ -462,7 +463,6 @@ export function BomPage() {
 function BomTreeNode({ node, depth }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children && node.children.length > 0;
-
   return (
     <div>
       <div className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors"
@@ -493,6 +493,7 @@ function BomTreeNode({ node, depth }) {
   );
 }
 
+
 // ── PHASES PAGE ───────────────────────────────────────────────
 export function PhasesPage() {
   const { data: phases = [], isLoading } = useQuery('phases', plmApi.getPhases);
@@ -506,17 +507,236 @@ export function PhasesPage() {
       <div className="flex items-center gap-2 overflow-x-auto pb-4">
         {phases.map((phase, i) => (
           <React.Fragment key={phase.phaseId}>
-            <div className={`flex-shrink-0 bg-white border-2 rounded-xl px-5 py-4 text-center min-w-32 ${phase.active ? 'border-primary-200' : 'border-gray-100'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold mx-auto mb-2 ${phase.active ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
+            <div className="flex-shrink-0 bg-white border-2 border-primary-200 rounded-xl px-5 py-4 text-center min-w-32">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold mx-auto mb-2 bg-primary-600 text-white">
                 {phase.sequenceOrder}
               </div>
               <p className="text-sm font-semibold text-gray-800">{phase.displayName}</p>
-              <p className="text-xs text-gray-400 mt-1">{phase.active ? 'Active' : 'Inactive'}</p>
             </div>
             {i < phases.length - 1 && <ArrowRight size={20} className="text-gray-300 flex-shrink-0" />}
           </React.Fragment>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── DOCUMENTS PAGE ────────────────────────────────────────────
+export function TdpPage() {
+  const qc = useQueryClient();
+  const [selectedProduct, setSelectedProduct] = React.useState('');
+  const [selectedVersion, setSelectedVersion] = React.useState('');
+  const [versions, setVersions] = React.useState([]);
+  const [isDragging, setIsDragging] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadError, setUploadError] = React.useState('');
+  const [uploadSuccess, setUploadSuccess] = React.useState('');
+  const [docType, setDocType] = React.useState('DRAWING');
+  const fileInputRef = React.useRef(null);
+
+  const { data: products = [] } = useQuery('products', plmApi.getProducts);
+  const { data: documents = [], isLoading: docsLoading } = useQuery(
+    ['documents', selectedVersion],
+    () => plmApi.getDocuments(selectedVersion),
+    { enabled: !!selectedVersion }
+  );
+
+  const loadVersions = async (productId) => {
+    setSelectedProduct(productId);
+    setSelectedVersion('');
+    setVersions([]);
+    if (productId) {
+      const v = await plmApi.getVersions(productId);
+      setVersions(v);
+    }
+  };
+
+  const handleUpload = async (file) => {
+    if (!selectedVersion) { setUploadError('Please select a product version first.'); return; }
+    if (!file) return;
+    setUploading(true);
+    setUploadError('');
+    setUploadSuccess('');
+    try {
+      const formData = new FormData();
+      formData.append('versionId', selectedVersion);
+      formData.append('documentType', docType);
+      formData.append('file', file);
+      await plmApi.uploadDocument(formData);
+      qc.invalidateQueries(['documents', selectedVersion]);
+      setUploadSuccess(`"${file.name}" uploaded successfully.`);
+    } catch (err) {
+      setUploadError(err.message || 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleUpload(file);
+  };
+
+  const onFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) handleUpload(file);
+    e.target.value = '';
+  };
+
+  const formatSize = (bytes) => {
+    if (!bytes) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const statusColor = (s) => {
+    if (s === 'APPROVED') return 'bg-green-100 text-green-700';
+    if (s === 'REJECTED') return 'bg-red-100 text-red-700';
+    return 'bg-yellow-100 text-yellow-700';
+  };
+
+  const docTypeOptions = ['DRAWING', 'SPECIFICATION', 'TEST_REPORT', 'MANUAL', 'CERTIFICATE', 'OTHER'];
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">Technical Data Packages</h2>
+        <p className="text-sm text-gray-500">Upload and manage documents attached to product versions</p>
+      </div>
+
+      {/* Selectors */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-wrap gap-4">
+        <div className="flex-1 min-w-40">
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Product</label>
+          <select
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            value={selectedProduct}
+            onChange={e => loadVersions(e.target.value)}
+          >
+            <option value="">Select product…</option>
+            {products.map(p => (
+              <option key={p.productId} value={p.productId}>{p.name} ({p.productCode})</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex-1 min-w-40">
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Version</label>
+          <select
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            value={selectedVersion}
+            onChange={e => setSelectedVersion(e.target.value)}
+            disabled={!selectedProduct}
+          >
+            <option value="">Select version…</option>
+            {versions.map(v => (
+              <option key={v.versionId} value={v.versionId}>{v.versionNumber} — {v.status}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex-1 min-w-40">
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Document Type</label>
+          <select
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            value={docType}
+            onChange={e => setDocType(e.target.value)}
+          >
+            {docTypeOptions.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Upload Zone */}
+      <div
+        className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer ${
+          isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-300 hover:border-primary-400 hover:bg-gray-50'
+        } ${!selectedVersion ? 'opacity-50 pointer-events-none' : ''}`}
+        onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={onDrop}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <input ref={fileInputRef} type="file" className="hidden" onChange={onFileSelect} />
+        {uploading ? (
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-gray-600">Uploading…</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3">
+            <Upload size={36} className={isDragging ? 'text-primary-500' : 'text-gray-400'} />
+            <div>
+              <p className="text-sm font-semibold text-gray-700">Drag & drop a file here</p>
+              <p className="text-xs text-gray-400 mt-1">or click to browse from your computer</p>
+            </div>
+            {!selectedVersion && (
+              <p className="text-xs text-amber-600 font-medium">Select a product version above first</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {uploadError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{uploadError}</div>
+      )}
+      {uploadSuccess && (
+        <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">{uploadSuccess}</div>
+      )}
+
+      {/* Document List */}
+      {selectedVersion && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <h3 className="font-semibold text-gray-800">Uploaded Documents</h3>
+          </div>
+          {docsLoading ? (
+            <div className="p-8 text-center text-sm text-gray-400">Loading documents…</div>
+          ) : documents.length === 0 ? (
+            <div className="p-8 text-center text-sm text-gray-400">No documents uploaded yet for this version.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                <tr>
+                  <th className="px-5 py-3 text-left">File Name</th>
+                  <th className="px-5 py-3 text-left">Type</th>
+                  <th className="px-5 py-3 text-left">Size</th>
+                  <th className="px-5 py-3 text-left">Status</th>
+                  <th className="px-5 py-3 text-left">Uploaded</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {documents.map(doc => (
+                  <tr key={doc.tdpId} className="hover:bg-gray-50">
+                    <td className="px-5 py-3">
+                      <a
+                        href={doc.storageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-600 hover:underline font-medium"
+                      >
+                        {doc.documentName}
+                      </a>
+                    </td>
+                    <td className="px-5 py-3 text-gray-600">{doc.documentType}</td>
+                    <td className="px-5 py-3 text-gray-500">{formatSize(doc.fileSizeBytes)}</td>
+                    <td className="px-5 py-3">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${statusColor(doc.approvalStatus)}`}>
+                        {doc.approvalStatus}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-gray-500">
+                      {doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }

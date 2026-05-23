@@ -111,7 +111,14 @@ public class UserProfileService {
                     .findByRoleAndActiveTrue(UserProfile.Role.valueOf(role))
                     .stream().map(this::mapToResponse).toList();
         }
-        return userProfileRepository.findAll()
+        if (department != null) {
+            // Previously this branch fell through to findAll(), ignoring the department filter
+            return userProfileRepository
+                    .findByDepartmentAndActiveTrue(department)
+                    .stream().map(this::mapToResponse).toList();
+        }
+        // findAll() was returning inactive users — use findByActiveTrue() instead
+        return userProfileRepository.findByActiveTrue()
                 .stream().map(this::mapToResponse).toList();
     }
 
