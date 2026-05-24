@@ -10,7 +10,11 @@ import java.util.UUID;
 // ─────────────────────────────────────────
 @Entity
 @Table(name = "skill_master")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 class SkillMaster {
 
     @Id

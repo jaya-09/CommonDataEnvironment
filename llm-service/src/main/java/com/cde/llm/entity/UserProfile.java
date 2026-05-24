@@ -8,7 +8,11 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "user_profile")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class UserProfile {
 
     @Id

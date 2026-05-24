@@ -7,7 +7,11 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "training_audit_log")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class TrainingAuditLog {
 
     @Id @GeneratedValue(strategy = GenerationType.UUID)

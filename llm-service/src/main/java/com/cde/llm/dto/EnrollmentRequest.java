@@ -5,7 +5,10 @@ import lombok.*;
 import java.time.LocalDate;
 import java.util.UUID;
 
-@Data @Builder @NoArgsConstructor @AllArgsConstructor
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class EnrollmentRequest {
     @NotNull UUID userId;
     @NotNull UUID courseId;

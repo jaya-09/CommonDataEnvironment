@@ -3,7 +3,10 @@ package com.cde.llm.dto;
 import jakarta.validation.constraints.*;
 import lombok.*;
 
-@Data @Builder @NoArgsConstructor @AllArgsConstructor
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class CreateUserRequest {
     @NotBlank String employeeId;
     @Email @NotBlank String email;

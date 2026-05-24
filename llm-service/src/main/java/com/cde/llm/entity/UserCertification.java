@@ -7,7 +7,11 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "user_certification")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class UserCertification {
 
     @Id

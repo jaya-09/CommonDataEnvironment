@@ -15,10 +15,6 @@ public interface UserProfileRepository extends JpaRepository<UserProfile, UUID> 
 
     List<UserProfile> findByActiveTrue();
 
-    Optional<UserProfile> findByEmail(String email);
-
-    Optional<UserProfile> findByEmployeeId(String employeeId);
-
     List<UserProfile> findByRoleAndActiveTrue(UserProfile.Role role);
 
     List<UserProfile> findByDepartmentAndActiveTrue(String department);
