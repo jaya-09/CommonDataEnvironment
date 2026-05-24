@@ -6,7 +6,11 @@ import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "processed_events")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class ProcessedEvent {
 
     @Id

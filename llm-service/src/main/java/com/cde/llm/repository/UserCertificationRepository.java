@@ -7,7 +7,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -51,7 +50,4 @@ public interface UserCertificationRepository extends JpaRepository<UserCertifica
         """)
     List<UserProfile> findUsersWithoutCertForPhase(@Param("phase") String phase);
 
-    /** Find certs expiring within the given window — for alerting. */
-    @Query("SELECT c FROM UserCertification c WHERE c.status = 'ACTIVE' AND c.expiresAt < :cutoff")
-    List<UserCertification> findExpiringSoon(@Param("cutoff") OffsetDateTime cutoff);
 }

@@ -9,7 +9,11 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "training_enrollment")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class TrainingEnrollment {
 
     @Id
